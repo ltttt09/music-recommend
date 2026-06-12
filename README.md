@@ -39,14 +39,23 @@ music-recommender/
 ## 后台登录
 
 - 后台地址：`http://localhost:5173/#/admin`
-- 默认密码：`admin123`
+- 本地演示默认密码：`admin123`
 - 修改方式：启动后端前设置环境变量 `MUSIC_ADMIN_PASSWORD`
+- 生产环境要求：设置 `MUSIC_ENV=production` 时必须显式设置 `MUSIC_ADMIN_PASSWORD`，不能依赖默认密码。
 
 PowerShell 示例：
 
 ```powershell
 $env:MUSIC_ADMIN_PASSWORD="你的后台密码"
 python backend/run.py
+```
+
+可选安全配置：
+
+```powershell
+$env:MUSIC_ENV="production"
+$env:MUSIC_CORS_ORIGINS="https://你的前端域名"
+$env:MUSIC_TOKEN_TTL_SECONDS="86400"
 ```
 
 ## 命令行运行
@@ -87,6 +96,17 @@ http://localhost:8000
 
 ```text
 http://localhost:8000/api/health
+```
+
+健康检查会返回推荐引擎状态：
+
+```json
+{
+  "status": "ok",
+  "engine_initialized": true,
+  "engine_initializing": false,
+  "engine_error": ""
+}
 ```
 
 ### 3. 安装前端依赖
@@ -263,6 +283,35 @@ GET /api/admin/action-logs
 - 需要异步处理操作日志，例如先写 Redis 队列，再批量落库。
 
 当前阶段更建议先保留 SQLite，使用 `data/cache/` 做离线推荐缓存；后续再将热门榜、用户画像和推荐候选迁移到 Redis。
+
+## 测试和质量检查
+
+后端已经提供最小 pytest 用例，覆盖普通用户越权访问和歌曲状态接口鉴权：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider
+```
+
+后端静态检查：
+
+```powershell
+$env:RUFF_CACHE_DIR="$env:TEMP\music-recommender-ruff-cache"
+.\.venv\Scripts\ruff.exe check backend src jobs
+```
+
+前端单元测试：
+
+```powershell
+cd frontend
+npm run test
+```
+
+前端构建：
+
+```powershell
+cd frontend
+npm run build
+```
 
 ## 推荐接口
 

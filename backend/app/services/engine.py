@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from collections import Counter, defaultdict
 
+from app.config import TOKEN_TTL_SECONDS
 from app.services.explainer import explain_recommendation, source_models
 from app.services.logging import admin_action_logs, admin_recommendation_logs, log_recommendations, log_user_action
 from app.services.profile import build_user_profile, excluded_track_ids, user_profile_detail
@@ -35,35 +36,54 @@ class RecommenderEngine:
         self.track_id_to_idx = {}
         self.idx_to_track_id = {}
         self.auth_tokens = {}
-        self.admin_tokens = set()  # token -> user_id
+        self.admin_tokens = {}
         self.metrics_jobs = {}
         self.metrics_lock = threading.Lock()
         self.latest_model_metrics = None
+        self._init_lock = threading.Lock()
+        self._initializing = False
+        self.initialization_error = ""
+
+    @property
+    def is_initialized(self):
+        return self._initialized
+
+    @property
+    def is_initializing(self):
+        return self._initializing
 
     def initialize(self, force_reseed=False):
-        if self._initialized and not force_reseed:
-            return
+        with self._init_lock:
+            if self._initialized and not force_reseed:
+                return
+            self._initializing = True
+            self.initialization_error = ""
+            try:
+                print("[Engine] Initializing DB...")
+                init_db()
 
-        print("[Engine] Initializing DB...")
-        init_db()
+                # Seed with real songs
+                self._seed_real_data()
 
-        # Seed with real songs
-        self._seed_real_data()
+                print("[Engine] Preparing ML data...")
+                ml_df = self._build_ml_dataframe()
 
-        print("[Engine] Preparing ML data...")
-        ml_df = self._build_ml_dataframe()
+                print("[Engine] Training ML models...")
+                self._train_ml_models(ml_df)
 
-        print("[Engine] Training ML models...")
-        self._train_ml_models(ml_df)
+                self.enhanced = EnhancedRecommender(self.ml_models)
+                self._initialized = True
 
-        self.enhanced = EnhancedRecommender(self.ml_models)
-        self._initialized = True
-
-        conn = get_connection()
-        n_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        n_tracks = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
-        conn.close()
-        print(f"[Engine] Ready! {n_users} users, {n_tracks} tracks")
+                conn = get_connection()
+                n_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+                n_tracks = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+                conn.close()
+                print(f"[Engine] Ready! {n_users} users, {n_tracks} tracks")
+            except Exception as exc:
+                self.initialization_error = str(exc)
+                raise
+            finally:
+                self._initializing = False
 
     def _seed_real_data(self):
         conn = get_connection()
@@ -189,6 +209,10 @@ class RecommenderEngine:
         db_track_id = self.idx_to_track_id.get(ml_track_idx)
         return int(db_track_id) if db_track_id is not None else None
 
+    def ensure_initialized(self):
+        if not self._initialized:
+            self.initialize()
+
     def _train_ml_models(self, df):
         for name, cls in [("ItemCF", ItemCF), ("UserCF", UserCF)]:
             print(f"  Training {name}...")
@@ -217,11 +241,17 @@ class RecommenderEngine:
     
     def create_admin_token(self):
         token = secrets.token_hex(32)
-        self.admin_tokens.add(token)
+        self.admin_tokens[token] = time.time() + TOKEN_TTL_SECONDS
         return token
 
     def verify_admin_token(self, token):
-        return token in self.admin_tokens
+        expires_at = self.admin_tokens.get(token)
+        if not expires_at:
+            return False
+        if expires_at < time.time():
+            self.admin_tokens.pop(token, None)
+            return False
+        return True
 
     def admin_delete_user(self, user_id):
         conn = get_connection()
@@ -283,11 +313,17 @@ class RecommenderEngine:
         if not self._verify_password(password, row["salt"], row["password_hash"]):
             return {"error": "用户名或密码错误"}
         token = secrets.token_hex(32)
-        self.auth_tokens[token] = row["id"]
+        self.auth_tokens[token] = {"user_id": row["id"], "expires_at": time.time() + TOKEN_TTL_SECONDS}
         return {"token": token, "user_id": row["id"], "username": username}
 
     def get_user_by_token(self, token):
-        return self.auth_tokens.get(token)
+        session = self.auth_tokens.get(token)
+        if not session:
+            return None
+        if session["expires_at"] < time.time():
+            self.auth_tokens.pop(token, None)
+            return None
+        return session["user_id"]
 
     # ---- Admin ----
 
@@ -855,6 +891,7 @@ class RecommenderEngine:
         return items
 
     def similar_tracks(self, track_id, n=10):
+        self.ensure_initialized()
         s2v = self.ml_models.get("song2vec")
         results = []
         ml_tid = self._to_ml_track_id(track_id)
@@ -932,6 +969,7 @@ class RecommenderEngine:
         return {"items": [dict(r) for r in rows]}
 
     def recommend(self, user_id, model_name="hybrid", n=10):
+        self.ensure_initialized()
         ml_uid = self._to_ml_user_id(user_id)
         model = self.ml_models.get(model_name)
         if not model:
@@ -953,6 +991,7 @@ class RecommenderEngine:
             return {"items": [], "error": str(e)}
 
     def get_models(self):
+        self.ensure_initialized()
         return {"models": sorted(self.ml_models.keys())}
 
     def submit_feedback(self, user_id, track_id, rating, model_name=""):
@@ -996,6 +1035,7 @@ class RecommenderEngine:
         )
 
     def generate_playlist(self, seed_track_id, user_id=1, length=20):
+        self.ensure_initialized()
         length = max(1, min(int(length), 50))
         seed_track = TrackRepo.get_by_id(seed_track_id)
         if not seed_track:
@@ -1052,12 +1092,15 @@ class RecommenderEngine:
         return {"items": PlaylistRepo.get_user_playlists(user_id)}
 
     def recommend_artists(self, user_id, n=10):
+        self.ensure_initialized()
         return self.enhanced.recommend_artists(user_id, n)
 
     def cold_start_seeds(self, n=20):
+        self.ensure_initialized()
         return self.enhanced.cold_start_seeds(n)
 
     def cold_start_recommend(self, liked_track_ids, n=10):
+        self.ensure_initialized()
         valid_liked_track_ids = []
         for tid in liked_track_ids:
             try:

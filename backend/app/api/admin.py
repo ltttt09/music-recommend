@@ -7,11 +7,11 @@ from functools import wraps
 import psutil
 from flask import Blueprint, jsonify, request
 
+from app.config import get_admin_password
 from app.services.engine import engine
 
 bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
-ADMIN_PASSWORD = os.getenv("MUSIC_ADMIN_PASSWORD", "admin123")
 _start_time = time.time()
 
 
@@ -42,7 +42,11 @@ def require_admin(fn):
 def admin_login():
     data = request.get_json(silent=True) or {}
     password = data.get("password", "")
-    if password != ADMIN_PASSWORD:
+    try:
+        admin_password = get_admin_password()
+    except RuntimeError as exc:
+        return jsonify({"detail": str(exc)}), 500
+    if password != admin_password:
         return jsonify({"detail": "密码错误"}), 401
     token = engine.create_admin_token()
     return jsonify({"token": token})

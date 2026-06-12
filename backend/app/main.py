@@ -1,8 +1,11 @@
 """Flask 应用入口。"""
 
+import threading
+
 from flask import Flask
 from flask_cors import CORS
 
+from app.config import AUTO_INIT_ENGINE, CORS_ORIGINS
 from app.services.engine import engine
 
 
@@ -10,19 +13,10 @@ def create_app() -> Flask:
     """创建并配置 Flask 应用。"""
     app = Flask(__name__)
 
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    CORS(app, resources={r"/api/*": {"origins": CORS_ORIGINS}})
 
-    _initialized = False
-
-    @app.before_request
-    def init_engine():
-        nonlocal _initialized
-        if not _initialized:
-            print("\n" + "=" * 50)
-            print("  音乐推荐 API 启动中...")
-            print("=" * 50)
-            engine.initialize()
-            _initialized = True
+    if AUTO_INIT_ENGINE:
+        threading.Thread(target=engine.initialize, name="engine-warmup", daemon=True).start()
 
     from app.api.tracks import bp as tracks_bp
     from app.api.users import bp as users_bp
@@ -40,6 +34,11 @@ def create_app() -> Flask:
 
     @app.route("/api/health")
     def health():
-        return {"status": "ok"}
+        return {
+            "status": "ok",
+            "engine_initialized": engine.is_initialized,
+            "engine_initializing": engine.is_initializing,
+            "engine_error": engine.initialization_error,
+        }
 
     return app

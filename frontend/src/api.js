@@ -99,7 +99,7 @@ export default {
     return fetchJSON(`${BASE}/users/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, track_id: trackId, rating, model_name: modelName }),
+      body: JSON.stringify({ track_id: trackId, rating, model_name: modelName }),
     });
   },
   getColdStartSeeds(n = 20) { return fetchJSON(`${BASE}/users/cold-start/seeds?n=${n}`); },
@@ -119,11 +119,11 @@ export default {
       body: JSON.stringify({}),
     });
   },
-  checkFavorite(trackId, userId = 1) {
-    return fetchJSON(`${BASE}/tracks/${trackId}/favorite?user_id=${userId}`);
+  checkFavorite(trackId) {
+    return fetchJSON(`${BASE}/tracks/${trackId}/favorite`);
   },
-  getTrackState(trackId, userId = 1) {
-    return fetchJSON(`${BASE}/tracks/${trackId}/state?user_id=${userId}`);
+  getTrackState(trackId) {
+    return fetchJSON(`${BASE}/tracks/${trackId}/state`);
   },
   getFavorites(userId) { return fetchJSON(`${BASE}/users/${userId}/favorites`); },
   updateProfile(userId, data) {
