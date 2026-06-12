@@ -1,0 +1,23 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 本地数据和运行产物
+data/*.db
+data/*.db-*
+data/cache/
+*.log
+
+# 编辑器
+.vscode/
+.idea/
