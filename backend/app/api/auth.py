@@ -2,6 +2,7 @@
 
 from flask import Blueprint, jsonify, request
 
+from app.api.utils import require_user
 from app.services.engine import engine
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -35,3 +36,14 @@ def login():
         return jsonify({"detail": result["error"]}), 401
 
     return jsonify(result)
+
+
+@bp.route("/me", methods=["GET"])
+def me():
+    user_id, error = require_user()
+    if error:
+        return error
+    result = engine.get_user(user_id)
+    if not result["user"]:
+        return jsonify({"detail": "用户不存在"}), 404
+    return jsonify({"user": result["user"], "stats": result["stats"]})

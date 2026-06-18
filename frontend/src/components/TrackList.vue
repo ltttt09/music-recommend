@@ -30,6 +30,8 @@
           <span v-if="isPlaying(item)">&#10074;&#10074;</span>
           <span v-else>&#9654;</span>
         </button>
+        <button v-if="showUnlike" class="text-action danger" @click="$emit('unlike', item)">取消喜欢</button>
+        <button v-if="canRemove" class="text-action danger" @click="$emit('remove', item)">移出</button>
         <span v-if="item.score !== undefined" class="track-score">
           {{ (item.score * 100).toFixed(1) }}%
         </span>
@@ -47,7 +49,10 @@ const imgFailed = reactive({})
 
 defineProps({
   items: { type: Array, default: () => [] },
+  showUnlike: { type: Boolean, default: false },
+  canRemove: { type: Boolean, default: false },
 })
+defineEmits(['unlike', 'remove'])
 
 function coverChar(item) {
   return coverText(item.track_name || item.title || '?')
@@ -70,6 +75,7 @@ function play(item) {
     preview_url: item.preview_url,
   })
 }
+
 </script>
 
 <style scoped>
@@ -177,6 +183,17 @@ function play(item) {
   font-weight: 700;
   color: var(--color-accent);
 }
+.text-action {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  border-radius: 999px;
+  padding: 5px 9px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.text-action:hover { border-color: var(--color-primary); color: var(--color-primary-light); }
+.text-action.danger:hover { border-color: var(--color-dislike); color: var(--color-dislike); }
 
 .empty {
   text-align: center;

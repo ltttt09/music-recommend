@@ -1,10 +1,71 @@
-"""Repository layer: all database queries for the music recommender."""
+"""Repository layer: all database queries for SoundMind."""
 
 import sqlite3
 from typing import Optional
 from datetime import datetime, timedelta
 
-from src.db.schema import get_connection
+from src.db.schema import get_connection, infer_language_group
+
+LANGUAGE_GROUPS = {
+    "ZH": {"CN", "TW", "HK"},
+    "CN": {"CN", "TW", "HK"},
+    "EN": {"US", "GB", "CA", "AU", "NZ", "IE"},
+    "US": {"US", "GB", "CA", "AU", "NZ", "IE"},
+    "JP": {"JP"},
+    "JA": {"JP"},
+    "KR": {"KR"},
+    "KO": {"KR"},
+    "FR": {"FR"},
+    "ES": {"ES", "MX"},
+    "DE": {"DE"},
+    "RU": {"RU"},
+    "AR": {"AR", "SA"},
+    "PT": {"BR", "PT"},
+    "BR": {"BR", "PT"},
+}
+
+LANGUAGE_GENRE_PREFIXES = {
+    "ZH": {"CN", "TW", "HK", "华语", "国语", "粤语", "中文"},
+    "CN": {"CN", "TW", "HK", "华语", "国语", "粤语", "中文"},
+    "EN": {"US", "GB", "AU", "CA", "欧美", "英文", "国际"},
+    "US": {"US", "GB", "AU", "CA", "欧美", "英文", "国际"},
+    "JP": {"JP", "日语", "日本"},
+    "JA": {"JP", "日语", "日本"},
+    "KR": {"KR", "韩语", "韩国"},
+    "KO": {"KR", "韩语", "韩国"},
+}
+
+
+def _language_codes(language: str) -> set[str]:
+    code = (language or "").strip().upper()
+    if not code:
+        return set()
+    return LANGUAGE_GROUPS.get(code, {code})
+
+
+def _language_genre_prefixes(language: str) -> set[str]:
+    code = (language or "").strip().upper()
+    return LANGUAGE_GENRE_PREFIXES.get(code, {code} if code else set())
+
+
+def _fill_missing_language_groups(conn):
+    rows = conn.execute(
+        """SELECT t.id, t.title, t.album, t.genre, t.language, a.name AS artist_name
+           FROM tracks t JOIN artists a ON t.artist_id=a.id
+           WHERE COALESCE(t.language_group, '') = ''"""
+    ).fetchall()
+    for row in rows:
+        group = infer_language_group(
+            row["language"],
+            row["title"],
+            row["artist_name"],
+            row["album"],
+            row["genre"],
+        )
+        if group:
+            conn.execute("UPDATE tracks SET language_group=? WHERE id=?", (group, row["id"]))
+    if rows:
+        conn.commit()
 
 
 class TrackRepo:
@@ -35,26 +96,41 @@ class TrackRepo:
     @staticmethod
     def search(query: str, page: int = 1, size: int = 20, genre: str = "", year_from: int = 0, year_to: int = 0, language: str = "", sort_by: str = "popularity", sort_order: str = "desc"):
         conn = get_connection()
+        if language:
+            _fill_missing_language_groups(conn)
         params = []
         where = ["t.preview_url != ''"]
+        debug_filters = {}
         if query:
             where.append("(t.title LIKE ? OR a.name LIKE ? OR t.album LIKE ?)")
             like = f"%{query}%"
             params.extend([like, like, like])
+            debug_filters["search"] = query
         if genre:
             where.append("t.genre LIKE ?")
             params.append(f"%{genre}%")
+            debug_filters["genre"] = genre
         if year_from > 0:
             where.append("t.year >= ?")
             params.append(year_from)
+            debug_filters["year_from"] = year_from
         if year_to > 0:
             where.append("t.year <= ?")
             params.append(year_to)
+            debug_filters["year_to"] = year_to
         if language:
-            # language is genre prefix like "CN", "JP", etc.
-            where.append("(t.genre LIKE ? OR t.genre LIKE ?)")
-            params.append(f"{language}-%")
-            params.append(f"{language}%")
+            requested_group = {
+                "CN": "ZH",
+                "TW": "ZH",
+                "HK": "ZH",
+                "JA": "JP",
+                "KO": "KR",
+                "US": "EN",
+                "GB": "EN",
+            }.get(language.strip().upper(), language.strip().upper())
+            where.append("UPPER(COALESCE(t.language_group, '')) = ?")
+            params.append(requested_group)
+            debug_filters["language"] = language
 
         count_sql = f"SELECT COUNT(*) FROM tracks t JOIN artists a ON t.artist_id = a.id WHERE {' AND '.join(where)}"
         total = conn.execute(count_sql, params).fetchone()[0]
@@ -76,14 +152,29 @@ class TrackRepo:
                         ORDER BY {order_col} {order_dir}, t.id DESC LIMIT ? OFFSET ?"""
         rows = conn.execute(data_sql, params + [size, offset]).fetchall()
         conn.close()
-        return {"items": [dict(r) for r in rows], "total": total, "page": page, "size": size}
+        return {
+            "items": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "size": size,
+            "debug": {"filters": debug_filters, "sort_by": sort_by, "sort_order": sort_order},
+        }
 
     @staticmethod
-    def get_genres() -> list[str]:
+    def get_genres(limit: int = 0) -> list[dict]:
         conn = get_connection()
-        rows = conn.execute("SELECT DISTINCT genre FROM tracks WHERE genre != '' AND preview_url != ''").fetchall()
+        sql = """SELECT genre AS name, COUNT(*) AS count
+                 FROM tracks
+                 WHERE genre != '' AND preview_url != ''
+                 GROUP BY genre
+                 ORDER BY count DESC, genre ASC"""
+        params = []
+        if limit > 0:
+            sql += " LIMIT ?"
+            params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
         conn.close()
-        return sorted(r["genre"] for r in rows)
+        return [dict(r) for r in rows]
 
     @staticmethod
     def get_trending(limit: int = 20):
@@ -96,6 +187,19 @@ class TrackRepo:
                WHERE t.preview_url != ''
                GROUP BY t.id ORDER BY play_count DESC, t.popularity DESC
                LIMIT ?""", (limit,)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_latest(limit: int = 20):
+        conn = get_connection()
+        rows = conn.execute(
+            """SELECT t.*, a.name AS artist_name
+               FROM tracks t JOIN artists a ON t.artist_id = a.id
+               WHERE t.preview_url != ''
+               ORDER BY t.created_at DESC, t.id DESC LIMIT ?""",
+            (limit,),
         ).fetchall()
         conn.close()
         return [dict(r) for r in rows]
@@ -270,6 +374,67 @@ class FeedbackRepo:
             )
         conn.commit()
         conn.close()
+
+    @staticmethod
+    def has_liked(user_id: int, track_id: int) -> bool:
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT id FROM feedback WHERE user_id=? AND track_id=? AND rating>0 LIMIT 1",
+            (user_id, track_id),
+        ).fetchone()
+        conn.close()
+        return row is not None
+
+    @staticmethod
+    def clear_likes(user_id: int, track_id: int):
+        conn = get_connection()
+        conn.execute(
+            "UPDATE feedback SET rating=0, created_at=CURRENT_TIMESTAMP WHERE user_id=? AND track_id=? AND rating>0",
+            (user_id, track_id),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def clear_skips(user_id: int, track_id: int):
+        conn = get_connection()
+        conn.execute(
+            "DELETE FROM feedback WHERE user_id=? AND track_id=? AND rating<0",
+            (user_id, track_id),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def blacklist(user_id: int, page: int = 1, size: int = 20) -> dict:
+        conn = get_connection()
+        params = (user_id,)
+        total = conn.execute(
+            """SELECT COUNT(DISTINCT track_id)
+               FROM feedback
+               WHERE user_id=? AND rating<0
+                 AND muted_until IS NOT NULL
+                 AND muted_until > CURRENT_TIMESTAMP""",
+            params,
+        ).fetchone()[0]
+        rows = conn.execute(
+            """SELECT t.*, a.name AS artist_name,
+                      MAX(f.skip_count) AS skip_count,
+                      MAX(f.muted_until) AS muted_until,
+                      MAX(f.created_at) AS skipped_at
+               FROM feedback f
+               JOIN tracks t ON f.track_id=t.id
+               JOIN artists a ON t.artist_id=a.id
+               WHERE f.user_id=? AND f.rating<0
+                 AND f.muted_until IS NOT NULL
+                 AND f.muted_until > CURRENT_TIMESTAMP
+               GROUP BY t.id
+               ORDER BY skipped_at DESC
+               LIMIT ? OFFSET ?""",
+            (user_id, size, (page - 1) * size),
+        ).fetchall()
+        conn.close()
+        return {"items": [dict(r) for r in rows], "total": total, "page": page, "size": size}
 
     @staticmethod
     def get_liked_tracks(user_id: int) -> set[int]:

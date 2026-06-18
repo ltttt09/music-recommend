@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Music Recommender System CLI
+SoundMind CLI
 
 Usage:
     python main.py demo              Quick demo

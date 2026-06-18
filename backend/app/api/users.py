@@ -51,7 +51,13 @@ def recommend(user_id):
         return error
     model = request.args.get("model", "hybrid")
     n = int_arg("n", 10, min_val=1, max_val=50)
-    return jsonify(engine.recommend(user_id, model_name=model, n=n))
+    exclude_ids = []
+    for raw_id in request.args.get("exclude_ids", "").split(","):
+        raw_id = raw_id.strip()
+        if raw_id.isdigit():
+            exclude_ids.append(int(raw_id))
+    refresh = request.args.get("refresh", "").lower() in {"1", "true", "yes"}
+    return jsonify(engine.recommend(user_id, model_name=model, n=n, exclude_ids=exclude_ids, refresh=refresh))
 
 
 @bp.route("/<int:user_id>/artists", methods=["GET"])
@@ -111,6 +117,24 @@ def user_favorites(user_id):
     if error:
         return error
     return jsonify(engine.get_favorites(user_id))
+
+
+@bp.route("/<int:user_id>/blacklist", methods=["GET"])
+def user_blacklist(user_id):
+    _, error = require_same_user(user_id)
+    if error:
+        return error
+    page = int_arg("page", 1, min_val=1)
+    size = int_arg("size", 20, min_val=1, max_val=50)
+    return jsonify(engine.get_blacklist(user_id, page, size))
+
+
+@bp.route("/<int:user_id>/blacklist/<int:track_id>", methods=["DELETE"])
+def remove_blacklist(user_id, track_id):
+    _, error = require_same_user(user_id)
+    if error:
+        return error
+    return jsonify(engine.remove_from_blacklist(user_id, track_id))
 
 
 @bp.route("/<int:user_id>/profile", methods=["PUT"])

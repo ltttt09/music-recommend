@@ -2,7 +2,7 @@
 
 from flask import Blueprint, jsonify, request
 
-from app.api.utils import int_arg, require_same_user, require_user
+from app.api.utils import current_user_id, int_arg, require_same_user, require_user
 from app.services.engine import engine
 from src.db.schema import get_connection
 
@@ -38,7 +38,14 @@ def trending():
 
 @bp.route("/genres", methods=["GET"])
 def genres():
-    return jsonify(engine.get_genres())
+    limit = int_arg("limit", 0, min_val=0, max_val=200)
+    return jsonify(engine.get_genres(limit))
+
+
+@bp.route("/rankings", methods=["GET"])
+def rankings():
+    limit = int_arg("limit", 8, min_val=1, max_val=20)
+    return jsonify(engine.get_home_summary(current_user_id(), limit))
 
 
 @bp.route("/<int:track_id>", methods=["GET"])
@@ -55,17 +62,13 @@ def similar_tracks(track_id):
     return jsonify(engine.similar_tracks(track_id, n=n))
 
 
-@bp.route("/playlist/generate", methods=["POST"])
-def generate_playlist():
-    user_id, error = require_user()
-    if error:
-        return error
-    data = request.get_json(silent=True) or {}
-    seed_track_id = data.get("seed_track_id")
-    length = data.get("length", 20)
-    if not seed_track_id:
-        return jsonify({"detail": "缺少 seed_track_id"}), 400
-    return jsonify(engine.generate_playlist(seed_track_id, user_id, length))
+@bp.route("/<int:track_id>/lyrics", methods=["GET"])
+def lyrics(track_id):
+    result = engine.get_track_lyrics(track_id)
+    if isinstance(result, tuple):
+        payload, status = result
+        return jsonify(payload), status
+    return jsonify(result)
 
 
 @bp.route("/playlist/<int:playlist_id>", methods=["GET"])
@@ -82,7 +85,10 @@ def create_user_playlist():
     name = data.get("name", "").strip()
     if not name:
         return jsonify({"detail": "歌单名称不能为空"}), 400
-    return jsonify(engine.create_user_playlist(user_id, name, data.get("description", "")))
+    result = engine.create_user_playlist(user_id, name, data.get("description", ""))
+    if "error" in result:
+        return jsonify({"detail": result["error"]}), 409
+    return jsonify(result)
 
 
 @bp.route("/user-playlists/<int:user_id>", methods=["GET"])
@@ -90,7 +96,9 @@ def list_user_playlists(user_id):
     _, error = require_same_user(user_id)
     if error:
         return error
-    return jsonify(engine.get_user_playlists(user_id))
+    page = int_arg("page", 1, min_val=1)
+    size = int_arg("size", 20, min_val=1, max_val=50)
+    return jsonify(engine.get_user_playlists(user_id, page, size))
 
 
 @bp.route("/user-playlist/<int:playlist_id>", methods=["GET"])
@@ -161,7 +169,9 @@ def track_state(track_id):
 
 @bp.route("/<int:track_id>/comments", methods=["GET"])
 def list_comments(track_id):
-    return jsonify(engine.get_comments(track_id))
+    page = int_arg("page", 1, min_val=1)
+    size = int_arg("size", 10, min_val=1, max_val=50)
+    return jsonify(engine.get_comments(track_id, page, size, current_user_id()))
 
 
 @bp.route("/<int:track_id>/comment", methods=["POST"])
@@ -175,4 +185,31 @@ def add_comment(track_id):
         return jsonify({"detail": "评论内容不能为空"}), 400
     if len(content) > 500:
         return jsonify({"detail": "评论不能超过500字"}), 400
-    return jsonify(engine.add_comment(user_id, track_id, content))
+    parent_id = data.get("parent_id")
+    result = engine.add_comment(user_id, track_id, content, parent_id)
+    if "error" in result:
+        return jsonify({"detail": result["error"]}), 400
+    return jsonify(result)
+
+
+@bp.route("/comments/<int:comment_id>/like", methods=["POST"])
+def toggle_comment_like(comment_id):
+    user_id, error = require_user()
+    if error:
+        return error
+    result = engine.toggle_comment_like(user_id, comment_id)
+    if "error" in result:
+        return jsonify({"detail": result["error"]}), 404
+    return jsonify(result)
+
+
+@bp.route("/comments/<int:comment_id>", methods=["DELETE"])
+def delete_comment(comment_id):
+    user_id, error = require_user()
+    if error:
+        return error
+    result = engine.delete_comment(user_id, comment_id)
+    if "error" in result:
+        status = 403 if result["error"] == "只能删除自己的评论" else 404
+        return jsonify({"detail": result["error"]}), status
+    return jsonify(result)

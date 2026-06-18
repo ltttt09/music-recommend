@@ -1,4 +1,4 @@
-﻿"""Real-world song catalog for the music recommender."""
+﻿"""Real-world song catalog for SoundMind."""
 
 REAL_SONGS = [
     # Pop

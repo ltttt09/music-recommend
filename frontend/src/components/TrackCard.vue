@@ -52,6 +52,7 @@ const isCurrentPlaying = computed(() =>
 function play(track) {
   playTrack({ ...track, id: track.id || track.track_id })
 }
+
 </script>
 
 <style scoped>

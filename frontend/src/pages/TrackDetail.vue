@@ -37,19 +37,14 @@
             <span v-if="track.duration_ms">{{ formatDuration(track.duration_ms) }}</span>
           </div>
           <div class="hero-actions">
-            <button class="btn btn-like btn-sm" :class="{ active: liked }" @click="feedback(1)">
-              {{ liked ? '已喜欢' : '喜欢' }}
+            <button class="btn btn-like btn-sm" :class="{ active: liked }" :disabled="feedbackLoading" @click="feedback(1)">
+              {{ feedbackLoading ? '处理中...' : (liked ? '已喜欢' : '喜欢') }}
             </button>
-            <button class="btn btn-dislike btn-sm" :class="{ active: skipped }" @click="feedback(-1)">
-              {{ skipped ? '已跳过' : '跳过' }}
+            <button class="btn btn-dislike btn-sm" :class="{ active: skipped }" :disabled="feedbackLoading" @click="feedback(-1)">
+              {{ skipped ? '已在黑名单' : '移入黑名单' }}
             </button>
-            <button class="btn btn-sm" :class="favorited ? 'btn-fav-active' : 'btn-ghost'" @click="toggleFav">
-              {{ favorited ? '已收藏' : '收藏' }}
-            </button>
+            <button class="btn btn-ghost btn-sm" @click="playlistOpen = true">加入歌单</button>
             <button class="btn btn-ghost btn-sm" @click="shareLink">分享</button>
-            <button class="btn btn-primary btn-sm" @click="generatePlaylist" :disabled="playlistLoading">
-              {{ playlistLoading ? '生成中...' : '生成歌单' }}
-            </button>
           </div>
           <p v-if="toast" class="toast" :class="toastType">{{ toast }}</p>
         </div>
@@ -62,21 +57,77 @@
       </div>
 
       <div class="section">
-        <h2>评论 ({{ comments.length }})</h2>
+        <h2>歌词</h2>
+        <div v-if="lyricsLoading" class="lyrics-box muted">歌词加载中...</div>
+        <pre v-else-if="lyrics" class="lyrics-box">{{ lyrics }}</pre>
+        <div v-else class="lyrics-box muted">{{ lyricsMessage }}</div>
+      </div>
+
+      <div class="section">
+        <h2>评论 ({{ commentsTotal }})</h2>
         <div class="comment-form">
           <input v-model="commentText" placeholder="写下你的评论..." maxlength="500" @keyup.enter="submitComment" />
-          <button class="btn btn-primary btn-sm" @click="submitComment" :disabled="!commentText.trim()">发表</button>
+          <button class="btn btn-primary btn-sm" @click="submitComment" :disabled="!commentText.trim() || commentLoading">
+            {{ commentLoading ? '发表中...' : '发表' }}
+          </button>
         </div>
-        <div v-if="comments.length" class="comment-list">
+        <div v-if="commentsLoading" class="spinner"></div>
+        <div v-else-if="comments.length" class="comment-list">
           <div v-for="c in comments" :key="c.id" class="comment-item">
-            <span class="comment-user">{{ c.display_name || c.username }}</span>
-            <span class="comment-time">{{ fmtDate(c.created_at) }}</span>
+            <div class="comment-head">
+              <span class="comment-avatar">
+                <img v-if="c.avatar_url" :src="c.avatar_url" alt="" />
+                <b v-else>{{ (c.display_name || c.username || '?').charAt(0) }}</b>
+              </span>
+              <div>
+                <span class="comment-user">{{ c.display_name || c.username }}</span>
+                <span class="comment-time">{{ fmtDate(c.created_at) }}</span>
+              </div>
+            </div>
             <p class="comment-body">{{ c.content }}</p>
+            <div class="comment-actions">
+              <button :class="{ active: c.liked_by_me }" @click="toggleCommentLike(c)">赞 {{ c.like_count || 0 }}</button>
+              <button @click="openReply(c, c)">{{ replyTarget === c.id ? '收起' : '回复' }}</button>
+              <button v-if="c.can_delete" @click="deleteComment(c)">删除</button>
+            </div>
+            <div v-if="replyTarget === c.id" class="reply-form">
+              <input v-model="replyText" placeholder="回复评论..." maxlength="500" @keyup.enter="submitReply(c)" />
+              <button class="btn btn-primary btn-sm" :disabled="!replyText.trim() || commentLoading" @click="submitReply(c)">回复</button>
+            </div>
+            <div v-if="c.replies?.length" class="reply-list">
+              <div v-for="r in visibleReplies(c)" :key="r.id" class="reply-item">
+                <div class="comment-head">
+                  <span class="comment-avatar small">
+                    <img v-if="r.avatar_url" :src="r.avatar_url" alt="" />
+                    <b v-else>{{ (r.display_name || r.username || '?').charAt(0) }}</b>
+                  </span>
+                  <div>
+                    <span class="comment-user">{{ r.display_name || r.username }}</span>
+                    <span class="comment-time">{{ fmtDate(r.created_at) }}</span>
+                  </div>
+                </div>
+                <p class="comment-body">{{ r.content }}</p>
+                <div class="comment-actions">
+                  <button :class="{ active: r.liked_by_me }" @click="toggleCommentLike(r)">赞 {{ r.like_count || 0 }}</button>
+                  <button @click="openReply(c, r)">回复</button>
+                  <button v-if="r.can_delete" @click="deleteComment(r)">删除</button>
+                </div>
+              </div>
+              <button v-if="c.replies.length > 2" class="reply-toggle" @click="toggleReplies(c.id)">
+                {{ expandedReplies.has(c.id) ? '收起回复' : `展开全部 ${c.replies.length} 条回复` }}
+              </button>
+            </div>
+          </div>
+          <div class="pager">
+            <button class="btn btn-ghost btn-sm" :disabled="commentsPage <= 1" @click="loadComments(commentsPage - 1)">上一页</button>
+            <span>{{ commentsPage }} / {{ commentsPages }}</span>
+            <button class="btn btn-ghost btn-sm" :disabled="commentsPage >= commentsPages" @click="loadComments(commentsPage + 1)">下一页</button>
           </div>
         </div>
         <div v-else class="empty-hint">暂无评论</div>
       </div>
     </template>
+    <AddToPlaylistModal v-if="playlistOpen" :track-ids="[Number(route.params.id)]" @close="playlistOpen = false" />
   </div>
 </template>
 
@@ -84,8 +135,10 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api.js'
+import { auth } from '../auth.js'
 import { pauseTrack, playerState, playTrack } from '../audio.js'
 import TrackList from '../components/TrackList.vue'
+import AddToPlaylistModal from '../components/AddToPlaylistModal.vue'
 import { coverStyle, coverText } from '../cover.js'
 
 const route = useRoute()
@@ -96,17 +149,29 @@ const loading = ref(true)
 const similarLoading = ref(true)
 const error = ref('')
 const imgFailed = ref(false)
-const playlistLoading = ref(false)
 const toast = ref('')
 const toastType = ref('success')
-const favorited = ref(false)
 const liked = ref(false)
 const skipped = ref(false)
+const feedbackLoading = ref(false)
 const mutedUntil = ref('')
 const comments = ref([])
+const commentsTotal = ref(0)
+const commentsPage = ref(1)
+const commentsSize = 10
+const commentsLoading = ref(false)
 const commentText = ref('')
+const commentLoading = ref(false)
+const replyTarget = ref(0)
+const replyParentId = ref(0)
+const replyText = ref('')
+const expandedReplies = ref(new Set())
+const lyrics = ref('')
+const lyricsMessage = ref('暂未找到这首歌的歌词')
+const lyricsLoading = ref(true)
+const playlistOpen = ref(false)
 
-function getUserId() { return Number(localStorage.getItem('user_id')) || 1 }
+function getUserId() { return auth.userId || Number(localStorage.getItem('user_id')) || 0 }
 function showToast(message, type = 'success') {
   toast.value = message
   toastType.value = type
@@ -121,31 +186,116 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-async function toggleFav() {
+async function loadComments(nextPage = commentsPage.value) {
+  commentsPage.value = Math.max(1, nextPage)
+  commentsLoading.value = true
   try {
-    const d = await api.toggleFavorite(Number(route.params.id))
-    favorited.value = d.favorited
-    showToast(d.favorited ? '已收藏' : '已取消收藏')
+    const d = await api.getComments(Number(route.params.id), commentsPage.value, commentsSize)
+    comments.value = d.items || []
+    commentsTotal.value = d.total || 0
   } catch (e) {
-    showToast(e.message || '操作失败', 'error')
+    showToast(e.message || '评论加载失败', 'error')
+  } finally {
+    commentsLoading.value = false
   }
 }
-
-async function loadComments() {
-  try {
-    const d = await api.getComments(Number(route.params.id))
-    comments.value = d.items || []
-  } catch {}
-}
+const commentsPages = computed(() => Math.max(1, Math.ceil((commentsTotal.value || 0) / commentsSize)))
 
 async function submitComment() {
   if (!commentText.value.trim()) return
+  if (!getUserId()) {
+    showToast('请先登录后评论', 'error')
+    return
+  }
+  commentLoading.value = true
   try {
-    await api.addComment(Number(route.params.id), getUserId(), commentText.value.trim())
+    const created = await api.addComment(Number(route.params.id), commentText.value.trim())
+    comments.value = created?.id ? [created, ...comments.value] : comments.value
     commentText.value = ''
-    loadComments()
+    if (!created?.id) await loadComments()
   } catch (e) {
     showToast(e.message || '评论失败', 'error')
+  } finally {
+    commentLoading.value = false
+  }
+}
+
+function openReply(root, target) {
+  if (!getUserId()) {
+    showToast('请先登录后回复', 'error')
+    return
+  }
+  if (replyTarget.value === root.id && replyParentId.value === target.id) {
+    replyTarget.value = 0
+    replyParentId.value = 0
+    return
+  }
+  replyTarget.value = root.id
+  replyParentId.value = target.id
+  replyText.value = target.id === root.id ? '' : `回复 @${target.display_name || target.username || '用户'}：`
+}
+
+function visibleReplies(comment) {
+  return expandedReplies.value.has(comment.id) ? comment.replies : comment.replies.slice(0, 2)
+}
+
+function toggleReplies(commentId) {
+  const next = new Set(expandedReplies.value)
+  next.has(commentId) ? next.delete(commentId) : next.add(commentId)
+  expandedReplies.value = next
+}
+
+async function submitReply(comment) {
+  if (!replyText.value.trim()) return
+  commentLoading.value = true
+  try {
+    const created = await api.addComment(Number(route.params.id), replyText.value.trim(), replyParentId.value || comment.id)
+    comment.replies = [...(comment.replies || []), created]
+    expandedReplies.value = new Set([...expandedReplies.value, comment.id])
+    replyText.value = ''
+    replyTarget.value = 0
+    replyParentId.value = 0
+  } catch (e) {
+    showToast(e.message || '回复失败', 'error')
+  } finally {
+    commentLoading.value = false
+  }
+}
+
+async function toggleCommentLike(comment) {
+  if (!getUserId()) {
+    showToast('请先登录后点赞', 'error')
+    return
+  }
+  try {
+    const data = await api.toggleCommentLike(comment.id)
+    comment.liked_by_me = data.liked
+    comment.like_count = data.like_count
+  } catch (e) {
+    showToast(e.message || '点赞失败', 'error')
+  }
+}
+
+async function deleteComment(comment) {
+  if (!confirm('确定删除这条评论？')) return
+  try {
+    await api.deleteOwnComment(comment.id)
+    await loadComments()
+  } catch (e) {
+    showToast(e.message || '删除失败', 'error')
+  }
+}
+
+async function loadLyrics(id) {
+  lyricsLoading.value = true
+  try {
+    const data = await api.getTrackLyrics(id)
+    lyrics.value = data.lyrics || ''
+    lyricsMessage.value = data.message || '暂未找到这首歌的歌词'
+  } catch (e) {
+    lyricsMessage.value = e.message || '歌词加载失败'
+  } finally {
+    lyricsLoading.value = false
   }
 }
 
@@ -177,37 +327,38 @@ function formatDuration(ms) {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 async function feedback(rating) {
+  if (feedbackLoading.value) return
+  const uid = getUserId()
+  if (!uid) {
+    showToast('请先登录', 'error')
+    return
+  }
   if (rating < 0) {
-    const ok = confirm('确定跳过这首歌？系统会在一段时间内减少推荐它，反复跳过会延长屏蔽时间。')
+    const ok = confirm('确定将这首歌移入黑名单？移入后会从喜欢列表移除，并在一段时间内不再推荐。')
     if (!ok) return
   }
   try {
+    feedbackLoading.value = true
     const id = Number(route.params.id)
-    await api.submitFeedback(getUserId(), id, rating)
+    const state = await api.submitFeedback(uid, id, rating)
     if (rating > 0) {
-      liked.value = true
-      showToast('已标记为喜欢')
+      liked.value = Boolean(state.liked)
+      skipped.value = Boolean(state.skipped)
+      showToast(liked.value ? '已标记为喜欢' : '已取消喜欢')
+      window.dispatchEvent(new CustomEvent('home-data-invalidated', { detail: { reason: 'likes' } }))
       return
     }
-    skipped.value = true
+    liked.value = Boolean(state.liked)
+    skipped.value = Boolean(state.skipped)
+    mutedUntil.value = state.muted_until || ''
     if (playerState.currentTrack?.id === id) pauseTrack()
-    showToast('已跳过，短期内不会再推荐')
+    showToast('已移入黑名单，并已从喜欢列表移除')
+    window.dispatchEvent(new CustomEvent('home-data-invalidated', { detail: { reason: 'blacklist' } }))
     setTimeout(goBack, 500)
   } catch (e) {
     showToast(e.message || '操作失败', 'error')
-  }
-}
-async function generatePlaylist() {
-  playlistLoading.value = true
-  try {
-    const d = await api.generatePlaylist(Number(route.params.id))
-    if (d.error) throw new Error(d.error)
-    showToast('歌单已生成')
-    setTimeout(() => { router.push('/playlist/' + d.playlist_id) }, 600)
-  } catch (e) {
-    showToast(e.message || '生成歌单失败', 'error')
   } finally {
-    playlistLoading.value = false
+    feedbackLoading.value = false
   }
 }
 
@@ -226,13 +377,9 @@ onMounted(async () => {
   } finally {
     similarLoading.value = false
   }
-  try {
-    const d = await api.checkFavorite(id, getUserId())
-    favorited.value = d.favorited
-  } catch {}
+  loadLyrics(id)
   try {
     const d = await api.getTrackState(id, getUserId())
-    favorited.value = d.favorited
     liked.value = d.liked
     skipped.value = d.skipped
     mutedUntil.value = d.muted_until || ''
@@ -261,17 +408,31 @@ onMounted(async () => {
 .toast.error { color: var(--color-dislike); }
 .section { margin-top: 32px; }
 .section h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
-.btn-fav-active { background: #fdcb6e; color: #2d3436; }
 .btn-like.active { box-shadow: 0 0 0 2px rgba(0,184,148,.25); filter: brightness(1.08); }
 .btn-dislike.active { box-shadow: 0 0 0 2px rgba(225,112,85,.25); filter: brightness(1.08); }
 .comment-form { display: flex; gap: 8px; margin-bottom: 16px; }
 .comment-form input { flex: 1; }
 .comment-list { display: flex; flex-direction: column; gap: 2px; }
 .comment-item { background: var(--color-surface); border-radius: var(--radius); padding: 12px 16px; }
+.comment-head { display: flex; align-items: center; gap: 10px; }
+.comment-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--color-bg); color: var(--color-primary-light); display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; }
+.comment-avatar.small { width: 28px; height: 28px; font-size: 12px; }
+.comment-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .comment-user { font-size: 13px; font-weight: 600; color: var(--color-primary-light); }
 .comment-time { font-size: 11px; color: var(--color-text-muted); margin-left: 8px; }
 .comment-body { margin-top: 6px; font-size: 14px; line-height: 1.5; color: var(--color-text); }
+.comment-actions { display: flex; gap: 8px; margin-top: 8px; }
+.comment-actions button { background: none; border: none; color: var(--color-text-muted); cursor: pointer; font-size: 12px; padding: 3px 6px; border-radius: 4px; }
+.comment-actions button:hover, .comment-actions button.active { color: var(--color-primary-light); background: var(--color-bg); }
+.reply-form { display: flex; gap: 8px; margin-top: 10px; }
+.reply-form input { flex: 1; }
+.reply-list { margin-top: 10px; padding-left: 42px; display: flex; flex-direction: column; gap: 8px; }
+.reply-item { background: var(--color-bg); border-radius: var(--radius); padding: 10px 12px; }
+.reply-toggle { margin-top: 8px; background: none; border: none; color: var(--color-primary-light); cursor: pointer; font-size: 12px; padding: 4px 0; }
+.pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 18px 0 4px; color: var(--color-text-muted); font-size: 13px; }
 .empty-hint { text-align: center; color: var(--color-text-muted); padding: 24px 0; font-size: 13px; }
+.lyrics-box { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 16px; max-height: 360px; overflow: auto; white-space: pre-wrap; line-height: 1.8; font-size: 14px; color: var(--color-text); }
+.lyrics-box.muted { color: var(--color-text-muted); }
 @media (max-width: 768px) {
   .track-hero { flex-direction: column; align-items: center; text-align: center; }
   .hero-cover { width: 200px; height: 200px; }

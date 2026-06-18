@@ -4,13 +4,13 @@
 
     <div v-if="loading" class="spinner"></div>
     <div v-else-if="user" class="profile-card">
-      <div class="avatar-box">
+      <div class="avatar-box" role="button" tabindex="0" @click="avatarMenuOpen = !avatarMenuOpen" @keydown.enter="avatarMenuOpen = !avatarMenuOpen">
         <img v-if="avatarPreview" :src="avatarPreview" alt="头像" />
         <span v-else>{{ (displayName || user.username || '?').charAt(0) }}</span>
       </div>
-      <div class="field">
-        <label>头像</label>
-        <input type="file" accept="image/*" @change="onAvatarSelected" />
+      <div v-if="avatarMenuOpen" class="avatar-actions">
+        <label class="avatar-upload">上传头像<input type="file" accept="image/*" @change="onAvatarSelected" /></label>
+        <button v-if="avatarPreview" class="btn btn-ghost btn-sm" @click="avatarPreview = ''">移除头像</button>
       </div>
       <div class="field">
         <label>用户名</label>
@@ -22,7 +22,9 @@
       </div>
       <div class="field">
         <label>偏好流派</label>
-        <input v-model="preferredGenres" placeholder="例如: 流行, 摇滚, 电子 (逗号分隔)" />
+        <div class="chip-list">
+          <button v-for="genre in preferenceOptions" :key="genre" type="button" class="chip" :class="{ active: selectedGenres.has(genre) }" @click="toggleGenre(genre)">{{ genre }}</button>
+        </div>
       </div>
       <div class="field">
         <label>注册时间</label>
@@ -46,25 +48,32 @@
 import { ref, onMounted } from 'vue'
 import api from '../api.js'
 import { auth } from '../auth.js'
+import { PREFERENCE_GENRES, parsePreferences, stringifyPreferences } from '../preferences.js'
 
 const user = ref(null)
 const stats = ref(null)
 const displayName = ref('')
-const preferredGenres = ref('')
 const avatarPreview = ref('')
+const avatarMenuOpen = ref(false)
+const preferenceOptions = PREFERENCE_GENRES
+const selectedGenres = ref(new Set())
 const loading = ref(true)
 const saving = ref(false)
 const msg = ref('')
 const msgOk = ref(false)
 
 onMounted(async () => {
-  const uid = auth.userId || Number(localStorage.getItem('user_id')) || 1
+  const uid = auth.userId || Number(localStorage.getItem('user_id')) || 0
+  if (!uid) {
+    loading.value = false
+    return
+  }
   try {
     const d = await api.getUser(uid)
     user.value = d.user
     stats.value = d.stats
     displayName.value = d.user?.display_name || ''
-    preferredGenres.value = d.user?.preferred_genres || ''
+    selectedGenres.value = parsePreferences(d.user?.preferred_genres || '')
     avatarPreview.value = d.user?.avatar_url || ''
   } catch (e) { console.error(e) } finally { loading.value = false }
 })
@@ -72,13 +81,13 @@ onMounted(async () => {
 function onAvatarSelected(event) {
   const file = event.target.files?.[0]
   if (!file) return
-  if (!file.type.startsWith('image/')) {
-    msg.value = '请选择图片文件'
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    msg.value = '头像仅支持 JPG、PNG、WebP'
     msgOk.value = false
     return
   }
-  if (file.size > 800 * 1024) {
-    msg.value = '头像图片不能超过 800KB'
+  if (file.size > 5 * 1024 * 1024) {
+    msg.value = '头像图片不能超过 5MB'
     msgOk.value = false
     return
   }
@@ -89,11 +98,23 @@ function onAvatarSelected(event) {
   reader.readAsDataURL(file)
 }
 
+function toggleGenre(genre) {
+  const next = new Set(selectedGenres.value)
+  next.has(genre) ? next.delete(genre) : next.add(genre)
+  selectedGenres.value = next
+}
+
 async function saveProfile() {
   saving.value = true; msg.value = ''
-  const uid = auth.userId || Number(localStorage.getItem('user_id')) || 1
+  const uid = auth.userId || Number(localStorage.getItem('user_id')) || 0
+  if (!uid) {
+    msg.value = '请先登录'
+    msgOk.value = false
+    saving.value = false
+    return
+  }
   try {
-    const d = await api.updateProfile(uid, { display_name: displayName.value, preferred_genres: preferredGenres.value, avatar_url: avatarPreview.value })
+    const d = await api.updateProfile(uid, { display_name: displayName.value, preferred_genres: stringifyPreferences(selectedGenres.value), avatar_url: avatarPreview.value })
     if (d.username) {
       auth.username = d.display_name || d.username
       localStorage.setItem('username', auth.username)
@@ -106,12 +127,19 @@ async function saveProfile() {
 
 <style scoped>
 .profile-card { max-width: 500px; background: var(--color-surface); border-radius: var(--radius); padding: 28px; }
-.avatar-box { width: 78px; height: 78px; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--color-primary), var(--color-accent)); color: #fff; font-size: 32px; font-weight: 800; margin-bottom: 18px; }
+.avatar-box { width: 78px; height: 78px; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--color-primary), var(--color-accent)); color: #fff; font-size: 32px; font-weight: 800; margin-bottom: 18px; cursor: pointer; border: 2px solid transparent; }
+.avatar-box:hover { border-color: var(--color-primary-light); }
 .avatar-box img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar-actions { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
+.avatar-upload { display: inline-flex; align-items: center; justify-content: center; padding: 6px 12px; border-radius: var(--radius); border: 1px solid var(--color-border); color: var(--color-text-muted); cursor: pointer; font-size: 12px; }
+.avatar-upload input { display: none; }
 .field { margin-bottom: 16px; }
 .field label { display: block; font-size: 12px; font-weight: 700; color: var(--color-text-muted); text-transform: uppercase; margin-bottom: 6px; }
 .field input { width: 100%; }
 .field-value { font-size: 15px; color: var(--color-text); padding: 8px 0; display: block; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text-muted); border-radius: 999px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
+.chip.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; font-weight: 700; }
 .actions { margin-top: 20px; }
 .msg { margin-top: 12px; font-size: 13px; }
 .msg.success { color: var(--color-like); }

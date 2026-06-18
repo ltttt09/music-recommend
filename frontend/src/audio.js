@@ -57,6 +57,7 @@ function getAudio() {
     })
     audioElement.addEventListener('play', () => {
       playerState.isPlaying = true
+      window.dispatchEvent(new CustomEvent('track-played', { detail: { track: playerState.currentTrack } }))
       logAction('audio_playing', {
         entity_type: 'track',
         entity_id: currentTrackId(),

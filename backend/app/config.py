@@ -30,26 +30,33 @@ def _csv_env(name: str, default: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-MUSIC_ENV = os.getenv("MUSIC_ENV", "development").strip().lower()
-IS_PRODUCTION = MUSIC_ENV in {"prod", "production"}
+SOUNDMIND_ENV = os.getenv("SOUNDMIND_ENV", "development").strip().lower()
+IS_PRODUCTION = SOUNDMIND_ENV in {"prod", "production"}
 
 CORS_ORIGINS = _csv_env(
-    "MUSIC_CORS_ORIGINS",
+    "SOUNDMIND_CORS_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173",
 )
 
-TOKEN_TTL_SECONDS = _int_env("MUSIC_TOKEN_TTL_SECONDS", 60 * 60 * 24)
-AUTO_INIT_ENGINE = _bool_env("MUSIC_AUTO_INIT_ENGINE", True)
+TOKEN_TTL_SECONDS = _int_env("SOUNDMIND_TOKEN_TTL_SECONDS", 60 * 60 * 24)
+AUTO_INIT_ENGINE = _bool_env("SOUNDMIND_AUTO_INIT_ENGINE", True)
+
+
+def get_admin_username() -> str:
+    """Return the admin username used by the separate admin console."""
+    username = os.getenv("SOUNDMIND_ADMIN_USERNAME", "").strip()
+    if username:
+        return username
+    if IS_PRODUCTION:
+        raise RuntimeError("生产环境必须设置 SOUNDMIND_ADMIN_USERNAME")
+    return "admin"
 
 
 def get_admin_password() -> str:
-    """返回后台密码。
-
-    本地演示允许默认密码；生产环境必须显式设置 MUSIC_ADMIN_PASSWORD。
-    """
-    password = os.getenv("MUSIC_ADMIN_PASSWORD", "").strip()
+    """Return the admin password used by the separate admin console."""
+    password = os.getenv("SOUNDMIND_ADMIN_PASSWORD", "").strip()
     if password:
         return password
     if IS_PRODUCTION:
-        raise RuntimeError("生产环境必须设置 MUSIC_ADMIN_PASSWORD")
-    return "admin123"
+        raise RuntimeError("生产环境必须设置 SOUNDMIND_ADMIN_PASSWORD")
+    return "admin"

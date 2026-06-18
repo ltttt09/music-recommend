@@ -123,7 +123,7 @@ class EnhancedRecommender:
             if len(selected) >= length: break
 
         seed_track = TrackRepo.get_by_id(seed_track_id)
-        name = f"电台: {seed_track['title']}" if seed_track else "生成歌单"
+        name = f"电台: {seed_track['title']}" if seed_track else "推荐电台"
         playlist_id = PlaylistRepo.create(user_id=user_id, name=name, is_system=True, seed_track_id=seed_track_id)
         PlaylistRepo.add_tracks(playlist_id, selected)
 

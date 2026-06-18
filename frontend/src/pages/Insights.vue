@@ -2,7 +2,8 @@
   <div class="container">
     <div class="page-header"><h1>听歌洞察</h1><p v-if="user">用户：{{ user.display_name || user.username }}</p></div>
 
-    <div v-if="loading" class="spinner"></div>
+    <div v-if="!getUserId()" class="empty-hint">请先登录后查看听歌洞察</div>
+    <div v-else-if="loading" class="spinner"></div>
     <div v-else-if="!stats" class="empty-hint">暂无听歌数据</div>
     <template v-else>
       <!-- 统计概览 -->
@@ -53,8 +54,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import api from '../api.js'
+import { auth } from '../auth.js'
 
-function getUserId() { return Number(localStorage.getItem('user_id')) || 1 }
+function getUserId() { return auth.userId || Number(localStorage.getItem('user_id')) || 0 }
 
 const user = ref(null)
 const stats = ref(null)
@@ -77,6 +79,7 @@ onMounted(() => { loadInsights() })
 
 async function loadInsights() {
   const uid = getUserId()
+  if (!uid) return
   loading.value = true
   try {
     const [uData, hData] = await Promise.all([

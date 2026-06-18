@@ -1,12 +1,11 @@
 ﻿<template>
   <nav class="navbar">
     <div class="navbar-inner container">
-      <router-link to="/" class="logo">🎵 乐荐</router-link>
+      <router-link to="/" class="logo">🎵 SoundMind</router-link>
       <div class="nav-links">
         <router-link to="/">首页</router-link>
         <router-link to="/browse">曲库</router-link>
-        <router-link to="/recommend">推荐</router-link>
-        <router-link to="/onboarding">发现</router-link>
+        <router-link to="/recommend">发现</router-link>
         <router-link to="/my">我的</router-link>
       </div>
       <div class="nav-right">
@@ -18,7 +17,6 @@
           <router-link to="/login" class="auth-link">登录</router-link>
           <router-link to="/register" class="auth-link">注册</router-link>
         </template>
-        <router-link to="/admin" class="admin-icon" title="管理控制台">⚙</router-link>
         <button class="theme-btn" @click="toggleTheme" :title="isDark ? '浅色模式' : '深色模式'">
           {{ isDark ? '☀' : '☾' }}
         </button>
@@ -88,8 +86,6 @@ onMounted(() => {
   padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .2s;
 }
 .btn-ghost-sm:hover { border-color: var(--color-dislike); color: var(--color-dislike); }
-.admin-icon { font-size: 18px; color: var(--color-text-muted); padding: 4px 8px; border-radius: 6px; transition: all .2s; }
-.admin-icon:hover { color: var(--color-primary-light); background: var(--color-surface-hover); }
 .theme-btn {
   background: none; border: 1px solid var(--color-border); border-radius: 50%;
   width: 34px; height: 34px; font-size: 16px;

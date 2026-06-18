@@ -22,7 +22,9 @@
           </button>
         </div>
       </div>
-      <div class="section"><TrackList :items="tracks"/></div>
+      <div class="section">
+        <TrackList :items="tracks" :can-remove="playlist.is_owner" @remove="removeTrack" />
+      </div>
     </template>
     <div v-else class="error-state">
       <h2>歌单未找到</h2>
@@ -45,7 +47,8 @@ const tracks = ref([])
 const loading = ref(true)
 
 function goBack() {
-  router.push('/')
+  if (window.history.length > 1) router.back()
+  else router.push('/')
 }
 
 function playAll() {
@@ -63,7 +66,25 @@ function playAll() {
 
 onMounted(async () => {
   try {
-    const d = await api.getPlaylist(Number(route.params.id))
+    const rawId = String(route.params.id)
+    let d = null
+    if (rawId.startsWith('home-')) {
+      const cached = JSON.parse(sessionStorage.getItem('home_recommend_playlists') || '[]')
+      const local = cached.find((item) => item.id === rawId)
+      if (!local) throw new Error('歌单缓存已失效')
+      d = {
+        playlist: { id: rawId, name: local.name, is_owner: false, creator: '系统推荐', is_system: true },
+        tracks: local.tracks || [],
+      }
+    } else {
+      try {
+        d = await api.getUserPlaylist(Number(rawId))
+        if (d.playlist) d.playlist.is_owner = true
+      } catch {
+        d = await api.getPlaylist(Number(rawId))
+        if (d.playlist) d.playlist.is_owner = false
+      }
+    }
     playlist.value = d.playlist
     tracks.value = (d.tracks || []).map(t => ({
       ...t,
@@ -76,6 +97,14 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+async function removeTrack(item) {
+  if (!playlist.value?.is_owner) return
+  const trackId = item.track_id || item.id
+  if (!confirm('确定从歌单中移出这首歌？')) return
+  await api.removeFromPlaylist(playlist.value.id, trackId)
+  tracks.value = tracks.value.filter((track) => (track.track_id || track.id) !== trackId)
+}
 </script>
 
 <style scoped>

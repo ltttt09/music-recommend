@@ -13,6 +13,21 @@ def _split_genres(value):
     return [g.strip() for g in value.replace("，", ",").split(",") if g.strip()]
 
 
+def _action_track_weight(action_type):
+    action_type = (action_type or "").lower()
+    if any(key in action_type for key in ("dislike", "skip", "blacklist")):
+        return 0
+    if any(key in action_type for key in ("favorite", "playlist")):
+        return 4
+    if "like" in action_type or "feedback" in action_type:
+        return 3
+    if "search" in action_type:
+        return 2
+    if any(key in action_type for key in ("play", "click", "detail", "view")):
+        return 1
+    return 0
+
+
 def build_user_profile(user_id, persist=True):
     listened = ListeningRepo.get_listened_track_ids(user_id)
     liked = FeedbackRepo.get_liked_tracks(user_id)
@@ -27,6 +42,13 @@ def build_user_profile(user_id, persist=True):
         row["track_id"]
         for row in conn.execute("SELECT DISTINCT track_id FROM comments WHERE user_id=?", (user_id,)).fetchall()
     }
+    action_rows = conn.execute(
+        """SELECT action_type, entity_id
+           FROM user_action_logs
+           WHERE user_id=? AND entity_type='track' AND entity_id IS NOT NULL
+           ORDER BY created_at DESC LIMIT 200""",
+        (user_id,),
+    ).fetchall()
     user_row = conn.execute("SELECT preferred_genres FROM users WHERE id=?", (user_id,)).fetchone()
     conn.close()
 
@@ -41,6 +63,13 @@ def build_user_profile(user_id, persist=True):
         + [(tid, 2) for tid in commented]
         + [(tid, 1) for tid in list(listened)[-80:]]
     )
+    action_tracks = []
+    for row in action_rows:
+        weight = _action_track_weight(row["action_type"])
+        if weight > 0:
+            action_tracks.append((row["entity_id"], weight))
+    weighted_tracks += action_tracks
+
     for track_id, weight in weighted_tracks:
         track = TrackRepo.get_by_id(track_id)
         if not track:
@@ -64,6 +93,7 @@ def build_user_profile(user_id, persist=True):
         "disliked": disliked,
         "favorites": favorites,
         "commented": commented,
+        "action_tracks": action_tracks,
         "genres": genres,
         "artists": artists,
         "disliked_genres": disliked_genres,

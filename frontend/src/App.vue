@@ -5,23 +5,37 @@
       <span>♫</span>
       <span>♬</span>
     </div>
-    <Navbar />
-    <main>
-      <router-view />
+    <Navbar v-if="!isAdminLayout" />
+    <main :class="{ 'admin-main': isAdminLayout }">
+      <router-view v-slot="{ Component, route }">
+        <KeepAlive>
+          <component :is="Component" v-if="route.meta.keepAlive" :key="route.name" />
+        </KeepAlive>
+        <component :is="Component" v-if="!route.meta.keepAlive" :key="route.fullPath" />
+      </router-view>
     </main>
-    <AudioPlayer />
+    <AudioPlayer v-if="!isAdminLayout" />
   </div>
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import Navbar from './components/Navbar.vue'
 import AudioPlayer from './components/AudioPlayer.vue'
+
+const route = useRoute()
+const isAdminLayout = computed(() => Boolean(route.meta?.adminLayout))
 </script>
 
 <style scoped>
 main {
   min-height: calc(100vh - 56px);
   padding-bottom: 80px;
+}
+main.admin-main {
+  min-height: 100vh;
+  padding-bottom: 32px;
 }
 .music-accent {
   position: fixed;

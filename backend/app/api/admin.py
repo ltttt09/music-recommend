@@ -7,7 +7,7 @@ from functools import wraps
 import psutil
 from flask import Blueprint, jsonify, request
 
-from app.config import get_admin_password
+from app.config import get_admin_password, get_admin_username
 from app.services.engine import engine
 
 bp = Blueprint("admin", __name__, url_prefix="/api/admin")
@@ -41,15 +41,17 @@ def require_admin(fn):
 @bp.route("/login", methods=["POST"])
 def admin_login():
     data = request.get_json(silent=True) or {}
+    username = data.get("username", "")
     password = data.get("password", "")
     try:
+        admin_username = get_admin_username()
         admin_password = get_admin_password()
     except RuntimeError as exc:
         return jsonify({"detail": str(exc)}), 500
-    if password != admin_password:
-        return jsonify({"detail": "密码错误"}), 401
+    if username != admin_username or password != admin_password:
+        return jsonify({"detail": "管理员账号或密码错误"}), 401
     token = engine.create_admin_token()
-    return jsonify({"token": token})
+    return jsonify({"token": token, "username": admin_username})
 
 
 @bp.route("/stats", methods=["GET"])
@@ -127,16 +129,34 @@ def retrain():
     data = request.get_json(silent=True) or {}
     force = data.get("force", False)
     try:
-        engine.initialize(force_reseed=force)
+        engine.retrain_models(force_reseed=force)
         return jsonify({"status": "ok", "message": "模型重新训练完成"})
     except Exception as e:
         return jsonify({"detail": str(e)}), 500
+
+
+@bp.route("/retrain-progress", methods=["GET"])
+@require_admin
+def retrain_progress():
+    return jsonify(engine.get_train_progress())
 
 
 @bp.route("/feedback", methods=["GET"])
 @require_admin
 def feedback_stats():
     return jsonify(engine.admin_feedback_stats())
+
+
+@bp.route("/seed-engagement", methods=["POST"])
+@require_admin
+def seed_engagement():
+    data = request.get_json(silent=True) or {}
+    try:
+        likes_per_user = int(data.get("likes_per_user") or 8)
+        comments_per_user = int(data.get("comments_per_user") or 2)
+    except (TypeError, ValueError):
+        return jsonify({"detail": "likes_per_user 和 comments_per_user 必须是数字"}), 400
+    return jsonify(engine.admin_seed_engagement(likes_per_user, comments_per_user))
 
 
 @bp.route("/comments", methods=["GET"])
@@ -157,6 +177,22 @@ def delete_comment(comment_id):
 @require_admin
 def model_metrics():
     return jsonify(engine.admin_model_metrics())
+
+
+@bp.route("/hybrid-weights", methods=["GET"])
+@require_admin
+def get_hybrid_weights():
+    return jsonify(engine.get_hybrid_weights())
+
+
+@bp.route("/hybrid-weights", methods=["PUT"])
+@require_admin
+def update_hybrid_weights():
+    data = request.get_json(silent=True) or {}
+    weights = data.get("weights", data)
+    if not isinstance(weights, dict):
+        return jsonify({"detail": "weights 必须是对象"}), 400
+    return jsonify(engine.save_hybrid_weights(weights))
 
 
 @bp.route("/model-metrics/jobs", methods=["POST"])

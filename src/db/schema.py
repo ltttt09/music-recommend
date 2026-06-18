@@ -1,5 +1,5 @@
 """
-SQLite database schema for the music recommender.
+SQLite database schema for SoundMind.
 
 Tables:
 - artists: artist metadata (name, genres, country)
@@ -16,7 +16,38 @@ import sqlite3
 from pathlib import Path
 
 DB_DIR = Path(__file__).resolve().parent.parent.parent / "data"
-DB_PATH = Path(os.getenv("MUSIC_DB_PATH", DB_DIR / "music_recommender.db"))
+DB_PATH = Path(os.getenv("SOUNDMIND_DB_PATH", DB_DIR / "soundmind.db"))
+
+
+def _has_char_range(text: str, start: int, end: int) -> bool:
+    return any(start <= ord(ch) <= end for ch in text)
+
+
+def infer_language_group(language: str = "", title: str = "", artist: str = "", album: str = "", genre: str = "") -> str:
+    """Infer a coarse language group from track metadata.
+
+    iTunes country/storefront codes are not actual song languages. This helper
+    stores a normalized field used by filters so the UI does not treat TW/HK
+    storefront songs as Chinese unless the song metadata itself supports it.
+    """
+    code = (language or "").strip().upper()
+    text = f"{title or ''} {album or ''}"
+    genre_text = genre or ""
+    has_cjk = _has_char_range(text, 0x4E00, 0x9FFF)
+    has_kana = _has_char_range(text, 0x3040, 0x30FF)
+    has_hangul = _has_char_range(text, 0xAC00, 0xD7AF)
+
+    if has_hangul or code in {"KR", "KO"}:
+        return "KR"
+    if has_kana or code in {"JP", "JA"}:
+        return "JP"
+    if has_cjk or any(token in genre_text for token in ("华语", "華語", "国语", "國語", "粤语", "粵語")):
+        return "ZH"
+    if code in {"US", "GB", "CA", "AU", "NZ", "IE"} or any("A" <= ch.upper() <= "Z" for ch in text):
+        return "EN"
+    if code in {"FR", "ES", "RU", "BR", "PT", "DE", "AR", "SA", "IN"}:
+        return {"BR": "PT", "SA": "AR"}.get(code, code)
+    return ""
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS artists (
@@ -50,6 +81,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     license TEXT DEFAULT '',
     audio_type TEXT DEFAULT 'preview',
     language TEXT DEFAULT '',
+    language_group TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (artist_id) REFERENCES artists(id)
 );
@@ -116,8 +148,12 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
 CREATE INDEX IF NOT EXISTS idx_history_user ON listening_history(user_id, listened_at);
 CREATE INDEX IF NOT EXISTS idx_history_track ON listening_history(track_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_user_track ON feedback(user_id, track_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_genre ON tracks(genre);
+CREATE INDEX IF NOT EXISTS idx_tracks_language ON tracks(language);
+CREATE INDEX IF NOT EXISTS idx_tracks_popularity ON tracks(popularity);
+CREATE INDEX IF NOT EXISTS idx_tracks_created ON tracks(created_at);
 CREATE INDEX IF NOT EXISTS idx_playlist_tracks ON playlist_tracks(playlist_id);
 
 CREATE TABLE IF NOT EXISTS favorites (
@@ -134,14 +170,32 @@ CREATE TABLE IF NOT EXISTS comments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     track_id INTEGER NOT NULL,
+    parent_id INTEGER,
     content TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (track_id) REFERENCES tracks(id)
+    FOREIGN KEY (track_id) REFERENCES tracks(id),
+    FOREIGN KEY (parent_id) REFERENCES comments(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id);
+CREATE INDEX IF NOT EXISTS idx_favorites_user_track ON favorites(user_id, track_id);
 CREATE INDEX IF NOT EXISTS idx_comments_track ON comments(track_id);
+CREATE INDEX IF NOT EXISTS idx_comments_user_created ON comments(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS comment_likes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    comment_id INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (comment_id) REFERENCES comments(id) ON DELETE CASCADE,
+    UNIQUE(user_id, comment_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comment_likes_comment ON comment_likes(comment_id);
+CREATE INDEX IF NOT EXISTS idx_comment_likes_user ON comment_likes(user_id);
 
 CREATE TABLE IF NOT EXISTS user_playlists (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -183,6 +237,7 @@ CREATE TABLE IF NOT EXISTS recommendation_logs (
 
 CREATE INDEX IF NOT EXISTS idx_rec_logs_user ON recommendation_logs(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_rec_logs_track ON recommendation_logs(track_id);
+CREATE INDEX IF NOT EXISTS idx_rec_logs_model_created ON recommendation_logs(model_name, created_at);
 
 CREATE TABLE IF NOT EXISTS user_profile_cache (
     user_id INTEGER PRIMARY KEY,
@@ -212,6 +267,12 @@ CREATE TABLE IF NOT EXISTS model_metrics (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS model_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS import_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL,
@@ -238,6 +299,16 @@ CREATE TABLE IF NOT EXISTS user_action_logs (
 
 CREATE INDEX IF NOT EXISTS idx_action_logs_user ON user_action_logs(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_action_logs_type ON user_action_logs(action_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_action_logs_entity ON user_action_logs(entity_type, entity_id, created_at);
+
+CREATE TABLE IF NOT EXISTS lyrics_cache (
+    track_id INTEGER PRIMARY KEY,
+    lyrics TEXT DEFAULT '',
+    source TEXT DEFAULT '',
+    status TEXT DEFAULT 'missing',
+    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (track_id) REFERENCES tracks(id)
+);
 """
 
 TRACK_MIGRATIONS = {
@@ -247,11 +318,17 @@ TRACK_MIGRATIONS = {
     "license": "TEXT DEFAULT ''",
     "audio_type": "TEXT DEFAULT 'preview'",
     "language": "TEXT DEFAULT ''",
+    "language_group": "TEXT DEFAULT ''",
 }
 
 FEEDBACK_MIGRATIONS = {
     "skip_count": "INTEGER DEFAULT 0",
     "muted_until": "TIMESTAMP",
+}
+
+COMMENT_MIGRATIONS = {
+    "parent_id": "INTEGER",
+    "deleted_at": "TIMESTAMP",
 }
 
 
@@ -267,7 +344,40 @@ def run_migrations(conn: sqlite3.Connection):
         _ensure_column(conn, "tracks", column, definition)
     for column, definition in FEEDBACK_MIGRATIONS.items():
         _ensure_column(conn, "feedback", column, definition)
+    for column, definition in COMMENT_MIGRATIONS.items():
+        _ensure_column(conn, "comments", column, definition)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_source ON tracks(source, external_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_language ON tracks(language)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_language_group ON tracks(language_group)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_popularity ON tracks(popularity)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_created ON tracks(created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_user_track ON feedback(user_id, track_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_favorites_user_track ON favorites(user_id, track_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_user_created ON comments(user_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_logs_model_created ON recommendation_logs(model_name, created_at)")
+    conn.execute("CREATE TABLE IF NOT EXISTS model_config (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_history_user_track_time ON listening_history(user_id, track_id, listened_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_history_track_time ON listening_history(track_id, listened_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_rating_created ON feedback(rating, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_user_rating_muted ON feedback(user_id, rating, muted_until)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_logs_user_model_created ON recommendation_logs(user_id, model_name, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_logs_track_created ON recommendation_logs(track_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_action_logs_entity ON user_action_logs(entity_type, entity_id, created_at)")
+    rows = conn.execute(
+        """SELECT t.id, t.title, t.album, t.genre, t.language, t.language_group, a.name AS artist_name
+           FROM tracks t JOIN artists a ON t.artist_id=a.id"""
+    ).fetchall()
+    for row in rows:
+        group = infer_language_group(
+            row["language"],
+            row["title"],
+            row["artist_name"],
+            row["album"],
+            row["genre"],
+        )
+        if group != (row["language_group"] or ""):
+            conn.execute("UPDATE tracks SET language_group=? WHERE id=?", (group, row["id"]))
 
 
 def get_connection() -> sqlite3.Connection:

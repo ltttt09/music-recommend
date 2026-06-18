@@ -1,5 +1,6 @@
 <template>
   <div class="container">
+    <button class="collapse-btn" @click="collapsePage">收起</button>
     <div v-if="loading" class="spinner"></div>
     <div v-else class="playing-layout">
       <div class="playing-cover">
@@ -37,7 +38,12 @@
 
     <section class="section">
       <h2>歌词</h2>
-      <div class="lyrics">
+      <div v-if="lyricsLoading" class="lyrics">歌词加载中...</div>
+      <div v-else-if="lyrics" class="lyrics">
+        <p v-for="line in lyricLines" :key="line">{{ line }}</p>
+      </div>
+      <div v-else class="lyrics">
+        <p>{{ lyricsMessage }}</p>
         <p v-for="line in lyricLines" :key="line">{{ line }}</p>
       </div>
     </section>
@@ -53,26 +59,37 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api.js'
 import { coverStyle, coverText } from '../cover.js'
 import { formatTime, playerState, playTrack, seekTo } from '../audio.js'
 
 const route = useRoute()
+const router = useRouter()
 const loading = ref(true)
 const track = ref({})
+const lyrics = ref('')
+const lyricsMessage = ref('暂未找到这首歌的歌词')
+const lyricsLoading = ref(true)
 
-const lyricLines = computed(() => [
-  '当前数据源没有提供正式歌词。',
-  `你正在试听《${track.value.title || '这首歌'}》。`,
-  '后续可以接入本地 LRC 文件或歌词 API，为 iTunes 歌曲匹配歌词。',
-])
+const lyricLines = computed(() => {
+  if (lyrics.value) return lyrics.value.split(/\r?\n/).filter(Boolean)
+  return [
+    `你正在试听《${track.value.title || '这首歌'}》。`,
+    '当前数据源是 iTunes 试听，部分歌曲可能没有匹配到本地歌词。',
+  ]
+})
 
 function formatDuration(ms) {
   if (!ms) return '-'
   const m = Math.floor(ms / 60000)
   const s = Math.floor((ms % 60000) / 1000)
   return `${m}:${String(s).padStart(2, '0')}`
+}
+
+function collapsePage() {
+  if (window.history.length > 1) router.back()
+  else router.push('/')
 }
 
 onMounted(async () => {
@@ -83,11 +100,21 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  try {
+    const data = await api.getTrackLyrics(id)
+    lyrics.value = data.lyrics || ''
+    lyricsMessage.value = data.message || lyricsMessage.value
+  } catch (e) {
+    lyricsMessage.value = e.message || '歌词加载失败'
+  } finally {
+    lyricsLoading.value = false
+  }
 })
 </script>
 
 <style scoped>
 .playing-layout{display:grid;grid-template-columns:280px 1fr;gap:36px;align-items:center;margin:32px 0}
+.collapse-btn{margin-top:18px;border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text-muted);border-radius:999px;padding:7px 14px;cursor:pointer;font-size:13px}.collapse-btn:hover{border-color:var(--color-primary);color:var(--color-primary-light)}
 .playing-cover{width:280px;aspect-ratio:1;border-radius:16px;overflow:hidden;box-shadow:0 18px 60px rgba(0,0,0,.28)}
 .playing-cover img,.cover-fallback{width:100%;height:100%;object-fit:cover}
 .cover-fallback{display:flex;align-items:center;justify-content:center}.cover-fallback span{font-size:88px;color:rgba(255,255,255,.45)}
