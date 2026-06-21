@@ -12,10 +12,10 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import api from '../api.js'
-import { auth } from '../auth.js'
+import { auth, getUserId } from '../auth.js'
 import TrackList from '../components/TrackList.vue'
 
-function getUserId() { return auth.userId || Number(localStorage.getItem('user_id')) || 0 }
+// getUserId() imported from auth.js
 
 const items = ref([])
 const loading = ref(true)

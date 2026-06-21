@@ -55,13 +55,15 @@ class UserCF:
         popularity = Counter(df["track_id_idx"])
         self.global_popularity = [t for t, _ in popularity.most_common()]
 
-    def recommend(self, user_id: int, n: int = 10) -> list[tuple[int, float]]:
+    def recommend(self, user_id: int, n: int = 10, exclude_track_ids: set[int] | None = None) -> list[tuple[int, float]]:
         if user_id not in self.user_idx_map:
             # Cold start: return global popular tracks
             return [(t, 0.0) for t in self.global_popularity[:n]]
 
         u_idx = self.user_idx_map[user_id]
         listened = set(self.user_item_matrix[u_idx].indices)
+        if exclude_track_ids:
+            listened -= exclude_track_ids
 
         sim_scores = self.user_similarity[u_idx]
         top_k_users = np.argsort(sim_scores)[::-1][:self.k]
@@ -88,6 +90,18 @@ class UserCF:
                       if t in self.item_idx_map]
         return [(self.reverse_item_map[idx], score) for idx, score in ranked[:n]]
 
+
+
+    def save(self, path):
+        """Save model to disk."""  
+        import joblib
+        joblib.dump(self, path)
+
+    @classmethod
+    def load(cls, path):
+        """Load model from disk."""  
+        import joblib
+        return joblib.load(path)
 
 class ItemCF:
     """Item-based collaborative filtering."""
@@ -129,7 +143,7 @@ class ItemCF:
         popularity = Counter(df["track_id_idx"])
         self.global_popularity = [t for t, _ in popularity.most_common()]
 
-    def recommend(self, user_id: int, n: int = 10) -> list[tuple[int, float]]:
+    def recommend(self, user_id: int, n: int = 10, exclude_track_ids: set[int] | None = None) -> list[tuple[int, float]]:
         if user_id not in self.user_idx_map:
             return [(t, 0.0) for t in self.global_popularity[:n]]
 
@@ -137,6 +151,8 @@ class ItemCF:
         listened = set(np.where(
             self.item_user_matrix[:, u_idx].toarray().flatten() > 0
         )[0])
+        if exclude_track_ids:
+            listened -= exclude_track_ids
 
         scores = defaultdict(float)
         for item_idx in listened:
@@ -153,6 +169,18 @@ class ItemCF:
                       if t in self.item_idx_map]
         return [(self.reverse_item_map[idx], score) for idx, score in ranked[:n]]
 
+
+
+    def save(self, path):
+        """Save model to disk."""  
+        import joblib
+        joblib.dump(self, path)
+
+    @classmethod
+    def load(cls, path):
+        """Load model from disk."""  
+        import joblib
+        return joblib.load(path)
 
 class SVDRecommender:
     """Pure NumPy truncated SVD matrix factorization."""
@@ -187,6 +215,7 @@ class SVDRecommender:
             t = self.item_idx_map[row["track_id_idx"]]
             ratings[u, t] = np.clip(row["listen_count"], 1, 5)
 
+        self._ratings = ratings
         self.global_mean = ratings[ratings > 0].mean()
         ratings_centered = ratings.copy()
         ratings_centered[ratings > 0] -= self.global_mean
@@ -201,7 +230,7 @@ class SVDRecommender:
         popularity = Counter(df["track_id_idx"])
         self.global_popularity = [t for t, _ in popularity.most_common()]
 
-    def recommend(self, user_id: int, n: int = 10) -> list[tuple[int, float]]:
+    def recommend(self, user_id: int, n: int = 10, exclude_track_ids: set[int] | None = None) -> list[tuple[int, float]]:
         if user_id not in self.user_idx_map:
             return [(t, 0.0) for t in self.global_popularity[:n]]
 
@@ -209,7 +238,26 @@ class SVDRecommender:
         user_vec = self.U[u_idx]
         predicted = user_vec @ self.Sigma @ self.Vt + self.global_mean
 
+        # Exclude items the user has already listened to in training data
+        excluded = set(np.where(self._ratings[u_idx] > 0)[0])
+        # Also exclude holdout track if provided
+        if exclude_track_ids:
+            for tid in exclude_track_ids:
+                if tid in self.item_idx_map:
+                    excluded.add(self.item_idx_map[tid])
+
         scores = [(self.reverse_item_map.get(t_idx, t_idx), predicted[t_idx])
-                  for t_idx in range(len(predicted))]
+                  for t_idx in range(len(predicted)) if t_idx not in excluded]
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores[:n]
+
+    def save(self, path):
+        """Save model to disk."""  
+        import joblib
+        joblib.dump(self, path)
+
+    @classmethod
+    def load(cls, path):
+        """Load model from disk."""  
+        import joblib
+        return joblib.load(path)

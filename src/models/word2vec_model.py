@@ -79,11 +79,14 @@ class Song2VecRecommender:
         popularity = Counter(df["track_id_idx"])
         self.global_popularity = [t for t, _ in popularity.most_common()]
 
-    def recommend(self, user_id: int, n: int = 10) -> list[tuple[int, float]]:
+    def recommend(self, user_id: int, n: int = 10,
+                  exclude_track_ids: set[int] | None = None) -> list[tuple[int, float]]:
         if self.model is None:
             return [(t, 0.0) for t in self.global_popularity[:n]]
 
         listened = self.user_history.get(user_id, set())
+        if exclude_track_ids:
+            listened = listened - exclude_track_ids
         valid_vectors = [
             self.track_vectors[t] for t in listened if t in self.track_vectors
         ]
@@ -115,3 +118,14 @@ class Song2VecRecommender:
             return []
         results = self.model.wv.most_similar(track_str, topn=n)
         return [(int(t), s) for t, s in results]
+
+    def save(self, path):
+        """Save model to disk."""  
+        import joblib
+        joblib.dump(self, path)
+
+    @classmethod
+    def load(cls, path):
+        """Load model from disk."""  
+        import joblib
+        return joblib.load(path)

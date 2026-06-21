@@ -19,6 +19,9 @@
           <p class="topbar-sub">SoundMind 演示后台</p>
         </div>
         <div class="topbar-right">
+          <button class="theme-btn" @click="toggleAdminTheme" :title="adminIsDark ? '浅色模式' : '深色模式'">
+            {{ adminIsDark ? '☀' : '☾' }}
+          </button>
           <button class="btn btn-ghost btn-sm" @click="logout">退出登录</button>
         </div>
       </div>
@@ -35,12 +38,9 @@
           <div class="stat-grid">
             <div class="stat-card"><span class="sv">{{ stats.users || 0 }}</span><span class="sl">用户数</span></div>
             <div class="stat-card"><span class="sv">{{ stats.tracks || 0 }}</span><span class="sl">歌曲数</span></div>
-            <div class="stat-card"><span class="sv">{{ stats.artists || 0 }}</span><span class="sl">艺人数</span></div>
             <div class="stat-card"><span class="sv">{{ stats.listens || 0 }}</span><span class="sl">播放记录</span></div>
             <div class="stat-card"><span class="sv like">{{ stats.likes || 0 }}</span><span class="sl">喜欢数</span></div>
             <div class="stat-card"><span class="sv dislike">{{ stats.dislikes || 0 }}</span><span class="sl">黑名单数</span></div>
-            <div class="stat-card"><span class="sv">{{ stats.playlists || 0 }}</span><span class="sl">系统歌单</span></div>
-            <div class="stat-card"><span class="sv">{{ stats.playable_tracks || 0 }}</span><span class="sl">可播放歌曲</span></div>
             <div class="stat-card"><span class="sv">{{ stats.comments || 0 }}</span><span class="sl">评论数</span></div>
           </div>
           <div class="admin-actions">
@@ -158,6 +158,24 @@
       </section>
 
       <section v-if="tab === 'users'">
+        <div class="toolbar">
+          <input v-model="userSearch" placeholder="搜索用户名或显示名..." class="search-input" @keyup.enter="loadUsers(1)" />
+          <select v-model="userGenreFilter" class="search-input compact-input" @change="loadUsers(1)">
+            <option value="">全部流派</option>
+            <option v-for="g in adminGenreList" :key="g" :value="g">{{ g }}</option>
+          </select>
+          <select v-model="userSortBy" class="search-input compact-input" @change="loadUsers(1)">
+            <option value="id">ID</option>
+            <option value="username">用户名</option>
+            <option value="join_date">注册时间</option>
+          </select>
+          <select v-model="userSortOrder" class="search-input compact-input" @change="loadUsers(1)">
+            <option value="asc">升序</option>
+            <option value="desc">降序</option>
+          </select>
+          <button class="btn btn-primary btn-xs" @click="loadUsers(1)">搜索</button>
+          <button class="btn btn-ghost btn-xs" v-if="userSearch || userGenreFilter" @click="userSearch=''; userGenreFilter=''; loadUsers(1)">清除</button>
+        </div>
         <div v-if="usersLoading" class="spinner"></div>
         <table v-else class="data-table">
           <thead><tr><th>ID</th><th>用户名</th><th>显示名称</th><th>偏好流派</th><th>注册时间</th><th>操作</th></tr></thead>
@@ -169,13 +187,7 @@
             </tr>
           </tbody>
         </table>
-        <div class="pagination-row">
-          <p class="pagination-info">共 {{ usersTotal }} 个用户，第 {{ usersPage }} / {{ usersMaxPage }} 页</p>
-          <div class="pager-actions">
-            <button class="btn btn-ghost btn-xs" :disabled="usersPage <= 1" @click="loadUsers(usersPage - 1)">上一页</button>
-            <button class="btn btn-ghost btn-xs" :disabled="usersPage >= usersMaxPage" @click="loadUsers(usersPage + 1)">下一页</button>
-          </div>
-        </div>
+        <Pagination :current="usersPage" :total="usersMaxPage" :total-items="usersTotal" item-name="个用户" @page-change="loadUsers" />
       </section>
 
       <section v-if="tab === 'tracks'">
@@ -213,22 +225,21 @@
             </tr>
           </tbody>
         </table>
-        <div class="pagination-row">
-          <p class="pagination-info">共 {{ trackTotal }} 条记录，第 {{ trackPage }} / {{ trackMaxPage }} 页</p>
-          <div class="pager-actions">
-            <button class="btn btn-ghost btn-xs" :disabled="trackPage <= 1" @click="loadTracks(trackPage - 1)">上一页</button>
-            <button class="btn btn-ghost btn-xs" :disabled="trackPage >= trackMaxPage" @click="loadTracks(trackPage + 1)">下一页</button>
-          </div>
-        </div>
+        <Pagination :current="trackPage" :total="trackMaxPage" :total-items="trackTotal" @page-change="loadTracks" />
       </section>
 
       <section v-if="tab === 'comments'">
+        <div class="admin-actions" style="margin-bottom:12px">
+          <input v-model="commentSearch" placeholder="搜索评论内容、用户、歌曲..." class="search-input" @keyup.enter="loadComments(1)" style="width:260px" />
+          <button class="btn btn-primary btn-xs" @click="loadComments(1)">搜索</button>
+          <button v-if="commentSearch" class="btn btn-xs" @click="commentSearch='';loadComments(1)">清除</button>
+        </div>
         <div v-if="commentsLoading" class="spinner"></div>
         <table v-else class="data-table">
-          <thead><tr><th>ID</th><th>用户</th><th>歌曲</th><th>内容</th><th>时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>序号</th><th>用户</th><th>歌曲</th><th>内容</th><th>时间</th><th>操作</th></tr></thead>
           <tbody>
-            <tr v-for="c in commentList" :key="c.id">
-              <td>{{ c.id }}</td>
+            <tr v-for="(c, idx) in commentList" :key="c.id">
+              <td>{{ commentsTotal - (commentsPage - 1) * commentsSize - idx }}</td>
               <td>{{ c.display_name || c.username }}</td>
               <td class="td-title">{{ c.track_title }}</td>
               <td class="td-comment">{{ c.content }}</td>
@@ -237,16 +248,29 @@
             </tr>
           </tbody>
         </table>
-        <div class="pagination-row">
-          <p class="pagination-info">共 {{ commentsTotal }} 条评论，第 {{ commentsPage }} / {{ commentsMaxPage }} 页</p>
-          <div class="pager-actions">
-            <button class="btn btn-ghost btn-xs" :disabled="commentsPage <= 1" @click="loadComments(commentsPage - 1)">上一页</button>
-            <button class="btn btn-ghost btn-xs" :disabled="commentsPage >= commentsMaxPage" @click="loadComments(commentsPage + 1)">下一页</button>
-          </div>
-        </div>
+        <Pagination :current="commentsPage" :total="commentsMaxPage" :total-items="commentsTotal" item-name="条评论" @page-change="loadComments" />
       </section>
 
       <section v-if="tab === 'data'">
+        <div class="admin-actions">
+          <template v-if="!itunesImporting">
+            <input v-model.number="itunesTarget" type="number" min="100" max="50000" step="1000" class="search-input" style="width:100px" placeholder="数量" />
+            <button class="btn btn-primary btn-sm" @click="startItunesImport">
+              导入 iTunes 数据
+            </button>
+            <span class="note" style="margin-left:4px">目标数量（100-50000）</span>
+          </template>
+          <template v-else>
+            <button class="btn btn-danger btn-sm" @click="cancelItunesImport">取消导入</button>
+            <span class="seed-msg">{{ itunesImportMsg }}</span>
+          </template>
+        </div>
+        <div v-if="itunesImporting" class="import-progress">
+          <p>已导入 {{ itunesImportProgress.imported || 0 }} / {{ itunesImportProgress.target || 0 }} 首，查询 {{ itunesImportProgress.queries || 0 }} 组
+            <span v-if="itunesImportProgress.status === 'cancelled'" style="color:#E53935;font-weight:bold">（已取消）</span>
+          </p>
+          <div class="progress-bar"><div class="progress-fill" :style="{ width: importPercent + '%' }"></div></div>
+        </div>
         <div v-if="dataLoading" class="spinner"></div>
         <template v-else>
           <div class="section">
@@ -320,13 +344,7 @@
             </tr>
           </tbody>
         </table>
-        <div class="pagination-row">
-          <p class="pagination-info">共 {{ actionLogsTotal }} 条操作日志，第 {{ actionLogsPage }} / {{ actionLogsMaxPage }} 页</p>
-          <div class="pager-actions">
-            <button class="btn btn-ghost btn-xs" :disabled="actionLogsPage <= 1" @click="loadActionLogs(actionLogsPage - 1)">上一页</button>
-            <button class="btn btn-ghost btn-xs" :disabled="actionLogsPage >= actionLogsMaxPage" @click="loadActionLogs(actionLogsPage + 1)">下一页</button>
-          </div>
-        </div>
+        <Pagination :current="actionLogsPage" :total="actionLogsMaxPage" :total-items="actionLogsTotal" item-name="条日志" @page-change="loadActionLogs" />
       </section>
 
       <section v-if="tab === 'models'">
@@ -352,7 +370,8 @@
             <div class="models-status-side">
               <span><b>{{ loadedModelCount }}</b><small>加载模型</small></span>
               <span><b>{{ metrics.sample_users || 0 }}</b><small>样本用户</small></span>
-              <span><b>{{ percent(metrics.precision_at_10) }}</b><small>Precision@10</small></span>
+              <span><b>{{ percent(metrics.related_hit_rate_at_100 ?? metrics.hit_rate_at_100) }}</b><small>相关命中率@100</small></span>
+              <span><b>{{ percent(metrics.related_ndcg_at_100 ?? metrics.ndcg_at_100) }}</b><small>相关NDCG@100</small></span>
               <button class="btn btn-ghost" @click="loadMetrics" :disabled="metricsLoading || metricsRefreshing">
                 {{ metricsRefreshing ? '刷新中...' : '刷新指标' }}
               </button>
@@ -373,20 +392,16 @@
               <p>{{ modelDescription(item.model) }}</p>
               <div class="models-card-stats">
                 <span>
-                  <b>{{ percent(item.precision_at_10) }}</b>
-                  <small>Precision@10</small>
+                  <b>{{ item.related_hits ?? item.hits }}<small style="font-size:.6em;opacity:.6">/{{ item.cases }}</small></b>
+                  <small>相关命中数</small>
                 </span>
                 <span>
-                  <b>{{ percent(item.recall_at_10) }}</b>
-                  <small>Recall@10</small>
+                  <b>{{ percent(item.related_hit_rate_at_100 ?? item.hit_rate_at_100) }}</b>
+                  <small>相关命中率@100</small>
                 </span>
                 <span>
-                  <b>{{ item.hits }}</b>
-                  <small>命中数</small>
-                </span>
-                <span>
-                  <b>{{ item.cases }}</b>
-                  <small>评估样本</small>
+                  <b>{{ percent(item.related_ndcg_at_100 ?? item.ndcg_at_100) }}</b>
+                  <small>相关NDCG@100</small>
                 </span>
               </div>
               <div class="models-weight-line">
@@ -402,23 +417,23 @@
                 {{ expandedModel === item.model ? '收起详情' : '展开详情' }}
               </button>
               <div v-show="expandedModel === item.model" class="models-detail-grid">
-                <span><b>{{ item.hits }}</b><small>命中数</small></span>
-                <span><b>{{ percent(item.precision_at_10) }}</b><small>Precision</small></span>
-                <span><b>{{ percent(item.recall_at_10) }}</b><small>Recall</small></span>
-                <span><b>{{ Number(item.avg_recommendations || 0).toFixed(1) }}</b><small>平均返回数</small></span>
-                <span class="models-detail-wide"><b>{{ modelParamText(item.model) }}</b><small>关键技术参数</small></span>
+                <span><b>{{ item.related_hits ?? item.hits }}/{{ item.cases }}</b><small>相关命中/样本</small></span>
+                <span><b>{{ percent(item.related_hit_rate_at_100 ?? item.hit_rate_at_100) }}</b><small>相关命中率@100</small></span>
+                <span><b>{{ percent(item.related_ndcg_at_100 ?? item.ndcg_at_100) }}</b><small>相关NDCG@100</small></span>
+                <span><b>{{ percent(item.coverage ?? item.coverage_percent) }}</b><small>覆盖率</small></span>
               </div>
             </article>
           </div>
 
-          <div v-show="showTrainProgress" class="models-progress-panel">
-            <div class="progress-ring" :style="{ '--p': trainPercent + '%' }">
-              <span>{{ trainPercent.toFixed(0) }}%</span>
+          <div v-show="showTrainProgress" class="models-progress-panel" :class="{ done: trainDone && !retraining && !metricsLoading }">
+            <div class="progress-ring" :class="{ done: trainDone && !retraining && !metricsLoading }" :style="{ '--p': trainPercent + '%' }">
+              <span v-if="trainDone && !retraining && !metricsLoading">✓</span>
+              <span v-else>{{ trainPercent.toFixed(0) }}%</span>
             </div>
             <div class="progress-body">
               <h3>{{ trainProgressTitle }}</h3>
               <p>{{ trainProgressDesc }}</p>
-              <div class="progress-track striped"><div class="progress-fill" :style="{ width: trainPercent + '%' }"></div></div>
+              <div class="progress-track" :class="{ striped: trainProgress.running }"><div class="progress-fill" :class="{ done: trainDone && !retraining && !metricsLoading }" :style="{ width: trainPercent + '%' }"></div></div>
               <div class="progress-meta">
                 <span>模型 {{ trainProgress.current_model || metricJob?.current_model || '-' }}</span>
                 <span>步骤 {{ trainProgress.total_models || modelCards.length || 0 }}</span>
@@ -443,9 +458,12 @@
                   <span>训练范围</span>
                   <select v-model="trainConfig.scope" @change="trainScopeChanged">
                     <option value="all">全部模型</option>
-                    <option value="hybrid">仅混合推荐</option>
-                    <option value="cf">仅协同过滤</option>
-                    <option value="embedding">仅嵌入模型</option>
+                    <option value="hybrid">混合推荐</option>
+                    <option value="itemcf">物品协同过滤</option>
+                    <option value="usercf">用户协同过滤</option>
+                    <option value="svd">矩阵分解 SVD</option>
+                    <option value="song2vec">歌曲向量</option>
+                    <option value="sequence">序列推荐</option>
                   </select>
                 </label>
                 <label class="config-item">
@@ -466,23 +484,28 @@
                 </label>
               </div>
               <div class="train-actions">
-                <label class="switch-row">
-                  <button type="button" :class="['switch', { on: trainConfig.incremental }]" :disabled="trainConfig.scope !== 'all'" @click="toggleIncremental"></button>
-                  <span>增量训练</span>
-                </label>
-                <label class="sample-control">
-                  评估样本
-                  <input v-model.number="metricSampleUsers" type="number" min="1" max="300" />
-                </label>
-                <button class="btn btn-primary" @click="startTraining" :disabled="retraining || metricsLoading">
-                  {{ retraining ? '训练中...' : '开始训练' }}
-                </button>
-                <button class="btn btn-ghost" @click="startMetricsEvaluation" :disabled="metricsLoading || retraining">
-                  {{ metricsLoading ? '评估中...' : '仅评估' }}
-                </button>
-                <button class="btn btn-danger" @click="resetAllModels" :disabled="retraining || metricsLoading">
-                  重置所有模型
-                </button>
+                <div class="train-options">
+                  <label class="switch-row">
+                    <button type="button" :class="['switch', { on: trainConfig.incremental }]" @click="toggleIncremental"></button>
+                    <span>增量训练</span>
+                  </label>
+                  <label class="sample-control">
+                    评估样本
+                    <input v-model.number="metricSampleUsers" type="number" min="1" :max="stats.users || 300" />
+                    <span class="note" style="font-size:11px">当前用户总数：{{ stats.users || '-' }}</span>
+                  </label>
+                </div>
+                <div class="train-buttons">
+                  <button class="btn btn-primary" @click="startTraining" :disabled="retraining || metricsLoading">
+                    {{ retraining ? '训练中...' : '开始训练' }}
+                  </button>
+                  <button class="btn btn-ghost" @click="startMetricsEvaluation" :disabled="metricsLoading || retraining">
+                    {{ metricsLoading ? '评估中...' : '仅评估' }}
+                  </button>
+                  <button class="btn btn-danger" @click="resetAllModels" :disabled="retraining || metricsLoading">
+                    重置所有模型
+                  </button>
+                </div>
               </div>
               <div class="models-log-list">
                 <div v-for="log in modelTrainingLogs" :key="log.id" class="models-log-row">
@@ -518,64 +541,22 @@
               <thead>
                 <tr>
                   <th @click="sortEvaluation('model')">模型{{ sortMark('model') }}</th>
-                  <th @click="sortEvaluation('precision_at_10')">Precision@10{{ sortMark('precision_at_10') }}</th>
-                  <th @click="sortEvaluation('recall_at_10')">Recall@10{{ sortMark('recall_at_10') }}</th>
-                  <th @click="sortEvaluation('hit_rate_at_10')">HitRate@10{{ sortMark('hit_rate_at_10') }}</th>
-                  <th @click="sortEvaluation('ndcg_at_10')">NDCG@10{{ sortMark('ndcg_at_10') }}</th>
+                  <th @click="sortEvaluation('related_hit_rate_at_100')">命中率@100{{ sortMark('related_hit_rate_at_100') }}</th>
+                  <th @click="sortEvaluation('related_ndcg_at_100')">NDCG@100{{ sortMark('related_ndcg_at_100') }}</th>
                   <th @click="sortEvaluation('coverage')">覆盖率{{ sortMark('coverage') }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="row in sortedEvaluationRows" :key="row.model">
                   <td><b>{{ modelLabel(row.model) }}</b></td>
-                  <td><div class="eval-bar-wrap"><span class="eval-bar"><span class="eval-bar-fill precision" :style="{ width: evalBarWidth(row, 'precision_at_10') }"></span></span><b class="eval-val">{{ percent(row.precision_at_10) }}</b></div></td>
-                  <td><div class="eval-bar-wrap"><span class="eval-bar"><span class="eval-bar-fill recall" :style="{ width: evalBarWidth(row, 'recall_at_10') }"></span></span><b class="eval-val">{{ percent(row.recall_at_10) }}</b></div></td>
-                  <td><div class="eval-bar-wrap"><span class="eval-bar"><span class="eval-bar-fill hitrate" :style="{ width: evalBarWidth(row, 'hit_rate_at_10') }"></span></span><b class="eval-val">{{ percent(row.hit_rate_at_10) }}</b></div></td>
-                  <td>{{ percent(row.ndcg_at_10) }}</td>
+                  <td><div class="eval-bar-wrap"><span class="eval-bar"><span class="eval-bar-fill hitrate" :style="{ width: evalBarWidth(row, 'related_hit_rate_at_100') }"></span></span><b class="eval-val">{{ percent(row.related_hit_rate_at_100 ?? row.hit_rate_at_100) }}</b></div></td>
+                  <td><div class="eval-bar-wrap"><span class="eval-bar"><span class="eval-bar-fill precision" :style="{ width: evalBarWidth(row, 'related_ndcg_at_100') }"></span></span><b class="eval-val">{{ percent(row.related_ndcg_at_100 ?? row.ndcg_at_100) }}</b></div></td>
                   <td>{{ row.coverage > 1 ? row.coverage.toFixed(1) + '%' : percent(row.coverage) }}</td>
                 </tr>
               </tbody>
             </table>
             <p v-else class="empty-mini">暂无模型指标。</p>
           </section>
-
-          <div class="radar-section">
-            <section class="radar-card">
-              <h3>雷达图对比</h3>
-              <div class="radar-viz">
-                <svg class="radar-svg" viewBox="0 0 240 240" role="img" aria-label="模型指标雷达图">
-                  <polygon points="120,38 198,94 168,186 72,186 42,94" class="radar-grid"></polygon>
-                  <polygon points="120,79 159,107 144,153 96,153 81,107" class="radar-grid inner"></polygon>
-                  <line v-for="axis in radarAxisPoints" :key="axis.key" x1="120" y1="120" :x2="axis.point.x" :y2="axis.point.y" class="radar-axis"></line>
-                  <text v-for="axis in radarAxisPoints" :key="axis.key + '-label'" :x="axis.labelPoint.x" :y="axis.labelPoint.y" class="radar-label">{{ axis.label }}</text>
-                  <polygon :points="radarPointsText(averageRadarPoints)" class="radar-area second"></polygon>
-                  <polygon :points="radarPointsText(hybridRadarPoints)" class="radar-area"></polygon>
-                  <circle v-for="point in hybridRadarPoints" :key="point.x + '-' + point.y" :cx="point.x" :cy="point.y" r="3" class="radar-dot"></circle>
-                </svg>
-              </div>
-              <div class="radar-legend">
-                <span><i class="swatch hybrid"></i>Hybrid</span>
-                <span><i class="swatch average"></i>模型均值</span>
-              </div>
-            </section>
-
-            <section class="radar-card">
-              <h3>训练历史</h3>
-              <div v-if="modelTrainingHistory.length" class="timeline">
-                <div v-for="row in modelTrainingHistory" :key="row.id" class="tl-item">
-                  <div class="tl-time">{{ row.time }}</div>
-                  <div class="tl-body">
-                    <div class="tl-title">{{ row.type }}</div>
-                    <div class="tl-desc">模型 {{ row.models }} 个 · 用户 {{ row.users }} 个 · 曲目 {{ row.tracks }} 首</div>
-                    <div class="tl-tags">
-                      <span :class="['tl-tag', row.status === 'success' ? 'good' : row.status === 'failed' ? 'bad' : '']">{{ trainingStatusLabel(row.status) }}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <p v-else class="empty-mini">暂无训练历史。</p>
-            </section>
-          </div>
         </div>
       </section>
 
@@ -622,7 +603,8 @@
 </template>
 
 <script setup>
-import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import Pagination from '../components/Pagination.vue'
 
 const AdminRank = {
   props: { title: String, items: Array, suffix: String },
@@ -672,8 +654,15 @@ const password = ref('')
 const error = ref('')
 const loading = ref(false)
 const loggedIn = ref(false)
+const adminIsDark = ref(true)
 const tab = ref('overview')
 let adminToken = sessionStorage.getItem(ADMIN_TOKEN_KEY) || ''
+
+function toggleAdminTheme() {
+  adminIsDark.value = !adminIsDark.value
+  document.documentElement.setAttribute('data-theme', adminIsDark.value ? 'dark' : 'light')
+  localStorage.setItem('theme', adminIsDark.value ? 'dark' : 'light')
+}
 
 const tabs = [
   { id: 'overview', label: '概览' },
@@ -693,6 +682,11 @@ const usersLoading = ref(false)
 const usersPage = ref(1)
 const usersSize = ref(20)
 const usersTotal = ref(0)
+const userSearch = ref('')
+const userGenreFilter = ref('')
+const userSortBy = ref('id')
+const userSortOrder = ref('asc')
+const adminGenreList = ref([])
 const trackList = ref([])
 const tracksLoading = ref(false)
 const trackSearch = ref('')
@@ -708,8 +702,17 @@ const commentsTotal = ref(0)
 const commentsLoading = ref(false)
 const commentsPage = ref(1)
 const commentsSize = ref(20)
+const commentSearch = ref("")
 const dataSources = reactive({ sources: [], import_runs: [] })
 const dataLoading = ref(false)
+const itunesImporting = ref(false)
+const itunesImportMsg = ref('')
+const itunesTarget = ref(5000)
+const itunesImportProgress = reactive({ imported: 0, queries: 0, target: 0, running: false, error: '' })
+const importPercent = computed(() => {
+  if (!itunesImportProgress.target) return 0
+  return Math.min(100, Math.round(itunesImportProgress.imported / itunesImportProgress.target * 100))
+})
 const logList = ref([])
 const logsTotal = ref(0)
 const logsLoading = ref(false)
@@ -767,19 +770,24 @@ const trainConfig = reactive({
   scope: 'all',
   split: 'holdout',
   minInteractions: 3,
-  seed: 42,
+  seed: Math.floor(Math.random() * 90000) + 10000,
   incremental: localStorage.getItem('admin_incremental_train') !== '0',
 })
 const trainProgress = ref({ percent: 0, stage: '等待训练', message: '', current_model: '', total_models: 6, running: false })
 const trainingLogs = ref([])
 const trainLogBox = ref(null)
-const evalSortKey = ref('precision_at_10')
+const trainDone = ref(false)
+const trainSuccessMsg = ref('')
+const evalSortKey = ref('precision_at_100')
 const evalSortDir = ref('desc')
 let retrainPollTimer = null
 let lastRetrainStage = ''
 let lastRetrainMessage = ''
 
 const genreDistribution = computed(() => stats.value.genre_distribution || [])
+watch(stats, (s) => {
+  if (s.genre_distribution) adminGenreList.value = s.genre_distribution.map(g => g.genre)
+}, { immediate: true })
 const trackMaxPage = computed(() => Math.max(1, Math.ceil((trackTotal.value || 0) / trackSize.value)))
 const usersMaxPage = computed(() => Math.max(1, Math.ceil((usersTotal.value || 0) / usersSize.value)))
 const commentsMaxPage = computed(() => Math.max(1, Math.ceil((commentsTotal.value || 0) / commentsSize.value)))
@@ -817,17 +825,21 @@ const modelCards = computed(() => {
       loaded: loadedModelKeys.value.includes(key) || Boolean(row.model) || isHybrid,
       cases: Number(row.cases ?? metrics.value.sample_users ?? 0),
       hits: Number(row.hits ?? 0),
-      precision_at_10: Number(row.precision_at_10 ?? (isHybrid ? metrics.value.precision_at_10 : 0) ?? 0),
-      recall_at_10: Number(row.recall_at_10 ?? (isHybrid ? metrics.value.recall_at_10 : 0) ?? 0),
-      hit_rate_at_10: Number(row.hit_rate_at_10 ?? row.hit_rate ?? row.recall_at_10 ?? 0),
-      ndcg_at_10: Number(row.ndcg_at_10 ?? row.ndcg ?? 0),
+      related_hits: Number(row.related_hits ?? row.hits ?? 0),
+      precision_at_100: Number(row.precision_at_100 ?? row.precision_at_50 ?? row.precision_at_10 ?? (isHybrid ? metrics.value.precision_at_100 : 0) ?? 0),
+      recall_at_100: Number(row.recall_at_100 ?? row.recall_at_50 ?? row.recall_at_10 ?? (isHybrid ? metrics.value.recall_at_100 : 0) ?? 0),
+      hit_rate_at_100: Number(row.hit_rate_at_100 ?? row.hit_rate_at_50 ?? row.hit_rate_at_10 ?? row.hit_rate ?? row.recall_at_100 ?? row.recall_at_10 ?? 0),
+      related_hit_rate_at_100: Number(row.related_hit_rate_at_100 ?? row.related_hit_rate_at_50 ?? row.hit_rate_at_100 ?? row.hit_rate_at_50 ?? row.hit_rate_at_10 ?? row.hit_rate ?? 0),
+      ndcg_at_100: Number(row.ndcg_at_100 ?? row.ndcg_at_50 ?? row.ndcg_at_10 ?? row.ndcg ?? 0),
+      related_ndcg_at_100: Number(row.related_ndcg_at_100 ?? row.related_ndcg_at_50 ?? row.ndcg_at_100 ?? row.ndcg_at_50 ?? row.ndcg_at_10 ?? row.ndcg ?? 0),
       coverage: Number(row.coverage ?? row.coverage_percent ?? metrics.value.coverage_percent ?? 0),
+      diversity: Number(row.diversity ?? metrics.value.diversity ?? 0),
       avg_recommendations: Number(row.avg_recommendations ?? (isHybrid ? metrics.value.avg_recommendations : 0) ?? 0),
       weight: modelWeightValue(key),
     }
   })
 })
-const maxModelPrecision = computed(() => Math.max(...modelCards.value.map((item) => Number(item.precision_at_10) || 0), 0))
+const maxModelPrecision = computed(() => Math.max(...modelCards.value.map((item) => Number(item.precision_at_100) || 0), 0))
 const modelWeightRows = computed(() => MODEL_WEIGHT_KEYS.map((key) => ({ key, label: modelLabel(key) })))
 const modelTrainingLogs = computed(() => {
   const rows = trainingLogs.value.slice(-5).reverse().map((log) => ({
@@ -860,38 +872,16 @@ const modelTrainingLogs = computed(() => {
   })
   return rows.slice(0, 6)
 })
-const modelTrainingHistory = computed(() => {
-  const rows = []
-  if (metricJob.value) {
-    rows.push({
-      id: 'job-history-' + (metricJob.value.job_id || metricJob.value.status || 'current'),
-      time: formatAdminDate(metricJob.value.updated_at || metricJob.value.started_at),
-      type: '离线评估',
-      models: modelCards.value.length,
-      users: metricJob.value.total_users || metrics.value.total_users || stats.value.users || 0,
-      tracks: metrics.value.total_tracks || stats.value.tracks || stats.value.total_tracks || 0,
-      status: metricJob.value.status === 'error' ? 'failed' : metricJob.value.status === 'completed' ? 'success' : 'running',
-    })
-  }
-  rows.push({
-    id: 'metrics-history-current',
-    time: formatAdminDate(metrics.value.updated_at || metrics.value.evaluated_at),
-    type: metrics.value.type || '快速指标',
-    models: modelCards.value.length,
-    users: metrics.value.total_users ?? stats.value.users ?? 0,
-    tracks: metrics.value.total_tracks ?? stats.value.tracks ?? stats.value.total_tracks ?? 0,
-    status: metricsError.value ? 'failed' : metricsLoading.value ? 'running' : 'success',
-  })
-  return rows
-})
 const trainPercent = computed(() => Math.max(0, Math.min(100, Number(trainProgress.value?.percent ?? metricProgress.value ?? 0))))
-const showTrainProgress = computed(() => retraining.value || metricsLoading.value || trainingLogs.value.length > 0)
+const showTrainProgress = computed(() => retraining.value || metricsLoading.value || trainDone.value || trainingLogs.value.length > 0)
 const trainProgressTitle = computed(() => {
+  if (trainDone.value && !retraining.value && !metricsLoading.value) return '训练评估完成'
   if (metricsLoading.value) return metricJob.value?.stage || '正在评估模型'
   if (retraining.value || trainProgress.value?.running) return trainProgress.value?.stage || '正在训练模型'
   return trainProgress.value?.stage || '训练控制台'
 })
 const trainProgressDesc = computed(() => {
+  if (trainDone.value && !retraining.value && !metricsLoading.value) return trainSuccessMsg.value || '所有模型训练与评估已完成，指标已更新'
   if (metricsLoading.value) return metricJob.value?.message || '正在执行离线评估任务'
   if (trainProgress.value?.current_model) {
     return `正在处理 ${trainProgress.value.current_model}，共 ${trainProgress.value.total_models || 6} 个步骤`
@@ -901,8 +891,10 @@ const trainProgressDesc = computed(() => {
 const sortedEvaluationRows = computed(() => {
   const rows = modelCards.value.map((item) => ({
     ...item,
-    hit_rate_at_10: Number(item.hit_rate_at_10 ?? item.recall_at_10 ?? 0),
-    ndcg_at_10: Number(item.ndcg_at_10 ?? (Number(item.precision_at_10 || 0) * 0.82)),
+    hit_rate_at_100: Number(item.hit_rate_at_100 ?? item.hit_rate_at_50 ?? item.recall_at_100 ?? 0),
+    related_hit_rate_at_100: Number(item.related_hit_rate_at_100 ?? item.related_hit_rate_at_50 ?? item.hit_rate_at_100 ?? 0),
+    ndcg_at_100: Number(item.ndcg_at_100 ?? item.ndcg_at_50 ?? (Number(item.precision_at_100 || 0) * 0.82)),
+    related_ndcg_at_100: Number(item.related_ndcg_at_100 ?? item.related_ndcg_at_50 ?? item.ndcg_at_100 ?? 0),
     coverage: Number(item.coverage ?? item.coverage_percent ?? metrics.value.coverage_percent ?? 0),
   }))
   return rows.sort((a, b) => {
@@ -914,29 +906,7 @@ const sortedEvaluationRows = computed(() => {
     return evalSortDir.value === 'asc' ? result : -result
   })
 })
-const radarAxes = [
-  { key: 'precision_at_10', label: 'Precision' },
-  { key: 'recall_at_10', label: 'Recall' },
-  { key: 'hit_rate_at_10', label: 'HitRate' },
-  { key: 'ndcg_at_10', label: 'NDCG' },
-  { key: 'coverage', label: '覆盖率' },
-]
-const radarAxisPoints = computed(() => radarAxes.map((axis, index) => ({
-  ...axis,
-  point: radarPoint(index, 1),
-  labelPoint: radarPoint(index, 1.14),
-})))
-const hybridRadarPoints = computed(() => {
-  const hybrid = sortedEvaluationRows.value.find((row) => row.model === 'hybrid') || sortedEvaluationRows.value[0] || {}
-  return radarAxes.map((axis, index) => radarPoint(index, radarMetricRatio(hybrid, axis.key)))
-})
-const averageRadarPoints = computed(() => {
-  const rows = sortedEvaluationRows.value.length ? sortedEvaluationRows.value : [{}]
-  return radarAxes.map((axis, index) => {
-    const avg = rows.reduce((sum, row) => sum + radarMetricRatio(row, axis.key), 0) / rows.length
-    return radarPoint(index, avg)
-  })
-})
+
 const topTracks = computed(() => stats.value.top_tracks || [])
 const podiumTracks = computed(() => {
   const rows = topTracks.value
@@ -1039,7 +1009,7 @@ function modelToneClass(index) {
 
 function precisionBarHeight(item) {
   const max = maxModelPrecision.value || 0
-  const value = Number(item?.precision_at_10) || 0
+  const value = Number(item?.precision_at_100) || 0
   if (!max || !value) return '0%'
   return Math.max(6, (value / max) * 100) + '%'
 }
@@ -1063,8 +1033,9 @@ function modelParamText(model) {
 
 function trainScopeChanged() {
   if (trainConfig.scope !== 'all') {
-    trainConfig.incremental = true
-    appendTrainingLog('warn', '当前后端暂不支持单类模型训练，已保留选择但执行时会回退为全量训练。')
+    appendTrainingLog('info', `训练范围切换为 ${modelLabel(trainConfig.scope)}，仅训练该模型后自动评估。`)
+  } else {
+    appendTrainingLog('info', '训练范围切换为全部模型。')
   }
   localStorage.setItem('admin_incremental_train', trainConfig.incremental ? '1' : '0')
 }
@@ -1112,9 +1083,9 @@ async function pollRetrainProgress() {
       clearRetrainPoll()
     }
     if (Number(data.percent || 0) >= 100 && !data.running) {
-      appendTrainingLog('done', '全量训练完成')
+      appendTrainingLog('done', '训练完成，正在启动自动评估...')
       clearRetrainPoll()
-      await Promise.all([loadMetrics(), loadSystem().catch(() => {})])
+      await startMetricsEvaluation()
     }
   } catch (e) {
     appendTrainingLog('warn', e.message || '训练进度查询失败')
@@ -1124,8 +1095,7 @@ async function pollRetrainProgress() {
 
 function startTraining() {
   if (trainConfig.scope !== 'all') {
-    appendTrainingLog('warn', '当前版本后端仅支持全量训练，已自动回退为全部模型。')
-    trainConfig.scope = 'all'
+    appendTrainingLog('info', `仅训练 ${modelLabel(trainConfig.scope)} 模型，Hybrid 将自动重新融合。`)
   }
   return retrainModel(!trainConfig.incremental)
 }
@@ -1167,18 +1137,18 @@ async function saveModelWeights() {
 }
 
 function exportModelReport() {
-  const report = {
-    exported_at: new Date().toISOString(),
-    metrics: metrics.value || {},
-    models: modelCards.value,
-    hybrid_weights: { ...modelWeights },
-    training_history: modelTrainingHistory.value,
-  }
-  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json;charset=utf-8' })
+  const m = metrics.value || {}
+  const p = (v) => ((Number(v) || 0) * 100).toFixed(2) + '%'
+  const dateStr = new Date().toLocaleString('zh-CN')
+  const rows = sortedEvaluationRows.value
+  const modelRowsHtml = rows.map((r, i) => `<tr><td>${i + 1}</td><td><b>${r.model_label || r.model}</b></td><td>${p(r.hit_rate_at_100)}</td><td>${p(r.related_hit_rate_at_100)}</td><td>${p(r.ndcg_at_100)}</td><td>${p(r.related_ndcg_at_100)}</td><td>${p(r.precision_at_100)}</td><td>${p(r.recall_at_100)}</td><td>${p(r.coverage)}</td><td>${p(r.diversity)}</td><td>${r.cases}</td></tr>`).join('\n')
+  const weightsHtml = MODEL_WEIGHT_KEYS.map(k => `<tr><td>${modelLabel(k)}</td><td>${modelWeights[k]}%</td></tr>`).join('\n')
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>SoundMind 评估报告</title><style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;max-width:960px;margin:40px auto;padding:0 20px;color:#333;background:#fafafa}h1{text-align:center;color:#2d3436;margin-bottom:4px}h2{color:#6c5ce7;margin-top:32px;border-bottom:2px solid #6c5ce7;padding-bottom:6px}.meta{text-align:center;color:#888;font-size:14px;margin-bottom:28px}.card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.06);margin-bottom:24px}table{width:100%;border-collapse:collapse;font-size:14px}th{background:#6c5ce7;color:#fff;padding:10px 14px;text-align:left;font-size:12px}td{padding:10px 14px;border-bottom:1px solid #eee}tr:hover td{background:#f5f6fa}.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-top:20px}.kpi{text-align:center;padding:16px;background:#f5f6fa;border-radius:12px}.kpi b{display:block;font-size:28px;color:#6c5ce7}.kpi small{color:#888;font-size:12px}.note{color:#888;font-size:13px;line-height:1.6;margin-top:16px}</style></head><body><h1>SoundMind 模型评估报告</h1><p class="meta">导出时间：${dateStr}　|　评估类型：${m.type || '快速指标'}　|　样本用户：${m.sample_users || '-'}　|　总用户：${m.total_users || '-'}</p><div class="card"><h2>综合指标</h2><div class="kpi-grid"><div class="kpi"><b>${p(m.hit_rate_at_100)}</b><small>命中率@100</small></div><div class="kpi"><b>${p(m.related_hit_rate_at_100)}</b><small>相关命中率@100</small></div><div class="kpi"><b>${p(m.ndcg_at_100)}</b><small>NDCG@100</small></div><div class="kpi"><b>${p(m.related_ndcg_at_100)}</b><small>相关NDCG@100</small></div><div class="kpi"><b>${p(m.coverage_percent || m.coverage)}</b><small>覆盖率</small></div><div class="kpi"><b>${p(m.diversity)}</b><small>多样性</small></div></div></div><div class="card"><h2>各模型详细指标</h2><table><thead><tr><th>#</th><th>模型</th><th>命中率@100</th><th>相关命中率@100</th><th>NDCG@100</th><th>相关NDCG@100</th><th>精确率@100</th><th>召回率@100</th><th>覆盖率</th><th>多样性</th><th>样本数</th></tr></thead><tbody>${modelRowsHtml}</tbody></table></div><div class="card"><h2>Hybrid 融合权重</h2><table><thead><tr><th>子模型</th><th>权重</th></tr></thead><tbody>${weightsHtml}</tbody></table></div>${m.notes ? `<p class="note">备注：${m.notes}</p>` : ''}</body></html>`
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `model-report-${new Date().toISOString().slice(0, 10)}.json`
+  link.download = `评估报告-${new Date().toISOString().slice(0, 10)}.html`
   document.body.appendChild(link)
   link.click()
   link.remove()
@@ -1206,12 +1176,6 @@ function formatAdminDate(value) {
   return date.toLocaleString('zh-CN', { hour12: false })
 }
 
-function trainingStatusLabel(status) {
-  if (status === 'failed') return '✗ 失败'
-  if (status === 'running') return '◎ 进行中'
-  return '✓ 成功'
-}
-
 function evalMetricValue(row, key) {
   if (key === 'model') return modelLabel(row.model)
   return Number(row?.[key] || 0)
@@ -1236,25 +1200,6 @@ function evalBarWidth(row, key) {
   return Math.max(4, Math.min(100, value * 100)) + '%'
 }
 
-function radarMetricRatio(row, key) {
-  const raw = key === 'coverage' ? Number(row?.[key] || 0) / 100 : Number(row?.[key] || 0)
-  return Math.max(0, Math.min(1, raw))
-}
-
-function radarPoint(index, ratio) {
-  const total = radarAxes.length
-  const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total
-  const radius = 82 * Math.max(0, Math.min(1.2, Number(ratio) || 0))
-  return {
-    x: 120 + Math.cos(angle) * radius,
-    y: 120 + Math.sin(angle) * radius,
-  }
-}
-
-function radarPointsText(points) {
-  return points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ')
-}
-
 async function doLogin() {
   loading.value = true
   error.value = ''
@@ -1271,6 +1216,8 @@ async function doLogin() {
     sessionStorage.setItem(ADMIN_USERNAME_KEY, data.username || adminUsername.value)
     loggedIn.value = true
     password.value = ''
+    const savedTheme = localStorage.getItem('theme')
+    if (savedTheme === 'light') { adminIsDark.value = false; document.documentElement.setAttribute('data-theme', 'light') }
     await loadStats()
   } catch (e) {
     error.value = e.message
@@ -1348,15 +1295,64 @@ async function seedEngagement() {
   try {
     const data = await adminFetch('/api/admin/seed-engagement', {
       method: 'POST',
-      body: JSON.stringify({ likes_per_user: 8, comments_per_user: 2 }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ likes_per_user: 20, comments_per_user: 5, comment_likes_per_user: 3, playlists_per_user: 1 }),
     })
-    seedMsg.value = `已生成 ${data.likes_created || 0} 条喜欢、${data.comments_created || 0} 条评论`
+    seedMsg.value = `已生成：${data.likes_created} 点赞、${data.comments_created} 评论、${data.comment_likes_created} 评论点赞、${data.dislikes_created} 不喜欢、${data.history_created} 播放记录、${data.playlists_created} 歌单`
     await loadStats()
   } catch (e) {
-    seedMsg.value = e.message || '生成失败'
+    seedMsg.value = '生成失败: ' + (e.message || e)
   } finally {
     seedLoading.value = false
   }
+}
+
+async function startItunesImport() {
+  const target = Math.max(100, Math.min(50000, itunesTarget.value || 5000))
+  itunesTarget.value = target
+  itunesImporting.value = true
+  itunesImportMsg.value = ''
+  try {
+    await adminFetch('/api/admin/import-itunes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target }) })
+    itunesImportMsg.value = '导入已启动，正在从 iTunes API 获取数据...'
+    pollImportProgress()
+  } catch(e) {
+    itunesImportMsg.value = '启动导入失败: ' + (e.message || e)
+    itunesImporting.value = false
+  }
+}
+
+async function cancelItunesImport() {
+  try {
+    await adminFetch('/api/admin/import-cancel', { method: 'POST' })
+    itunesImportMsg.value = '已请求取消导入，等待当前查询完成...'
+  } catch(e) {
+    itunesImportMsg.value = '取消失败: ' + (e.message || e)
+  }
+}
+
+function pollImportProgress() {
+  const timer = setInterval(async () => {
+    try {
+      const data = await adminFetch('/api/admin/import-progress')
+      Object.assign(itunesImportProgress, data)
+      if (!data.running) {
+        clearInterval(timer)
+        itunesImporting.value = false
+        if (data.status === 'cancelled') {
+          itunesImportMsg.value = `导入已取消：已导入 ${data.imported} 首歌`
+        } else {
+          itunesImportMsg.value = `导入完成：已导入 ${data.imported} 首歌`
+        }
+        loadStats()
+        loadDataSources()
+      }
+    } catch(e) {
+      clearInterval(timer)
+      itunesImporting.value = false
+      itunesImportMsg.value = '查询进度失败'
+    }
+  }, 3000)
 }
 
 async function loadUsers(nextPage = usersPage.value) {
@@ -1364,7 +1360,7 @@ async function loadUsers(nextPage = usersPage.value) {
   if (typeof nextPage !== 'number') nextPage = 1
   usersPage.value = Math.max(1, nextPage)
   try {
-    const data = await adminFetch('/api/admin/users?page=' + usersPage.value + '&size=' + usersSize.value)
+    const data = await adminFetch('/api/admin/users?page=' + usersPage.value + '&size=' + usersSize.value + '&search=' + encodeURIComponent(userSearch.value) + '&genre=' + encodeURIComponent(userGenreFilter.value) + '&sort_by=' + userSortBy.value + '&sort_order=' + userSortOrder.value)
     userList.value = data.items || []
     usersTotal.value = data.total || 0
   } finally { usersLoading.value = false }
@@ -1399,7 +1395,10 @@ async function loadComments(nextPage = commentsPage.value) {
   if (typeof nextPage !== 'number') nextPage = 1
   commentsPage.value = Math.max(1, nextPage)
   try {
-    const data = await adminFetch('/api/admin/comments?page=' + commentsPage.value + '&size=' + commentsSize.value)
+    const s = commentSearch.value || ''
+    const p = new URLSearchParams({ page: commentsPage.value, size: commentsSize.value })
+    if (s) p.set('search', s)
+    const data = await adminFetch(`/api/admin/comments?${p}`)
     commentList.value = data.items || []
     commentsTotal.value = data.total || 0
   } finally {
@@ -1488,10 +1487,11 @@ async function startMetricsEvaluation() {
   metricJob.value = null
   trainProgress.value = { percent: 0, stage: '离线评估', message: '正在创建评估任务', current_model: '', total_models: modelCards.value.length || 6, running: true }
   appendTrainingLog('info', `开始离线评估，样本数 ${metricSampleUsers.value}`)
+  const models = trainConfig.scope !== 'all' ? [trainConfig.scope] : undefined
   try {
     const job = await adminFetch('/api/admin/model-metrics/jobs', {
       method: 'POST',
-      body: JSON.stringify({ sample_users: metricSampleUsers.value, n: 10 }),
+      body: JSON.stringify({ sample_users: metricSampleUsers.value, n: 100, models }),
     })
     metricJob.value = job
     appendTrainingLog('info', `评估任务已创建：${job.job_id || '-'}`)
@@ -1530,8 +1530,11 @@ async function pollMetricsJob(jobId) {
       metrics.value = job.result || {}
       metricsLoading.value = false
       trainProgress.value = { ...trainProgress.value, percent: 100, stage: '评估完成', message: '离线评估完成', running: false }
-      appendTrainingLog('done', '离线评估完成')
+      trainDone.value = true
+      trainSuccessMsg.value = '训练与评估全部完成！模型指标已更新。'
+      appendTrainingLog('done', '离线评估完成 — 所有模型指标已更新')
       clearMetricsPoll()
+      loadStats()
       return
     }
     if (job.status === 'error') {
@@ -1557,19 +1560,31 @@ async function loadSystem() {
 
 async function deleteUser(id) {
   if (!confirm('确定删除用户 ' + id + ' 及其所有数据？')) return
-  await adminFetch('/api/admin/users/delete', { method: 'POST', body: JSON.stringify({ user_id: id }) })
+  try {
+    await adminFetch('/api/admin/users/delete', { method: 'POST', body: JSON.stringify({ user_id: id }) })
+  } catch (e) {
+    alert('删除用户失败：' + (e.message || '未知错误'))
+  }
   await Promise.all([loadUsers(), loadStats()])
 }
 
 async function deleteTrack(id) {
   if (!confirm('确定删除歌曲 ' + id + '？')) return
-  await adminFetch('/api/admin/tracks/delete', { method: 'POST', body: JSON.stringify({ track_id: id }) })
+  try {
+    await adminFetch('/api/admin/tracks/delete', { method: 'POST', body: JSON.stringify({ track_id: id }) })
+  } catch (e) {
+    alert('删除歌曲失败：' + (e.message || '未知错误'))
+  }
   await Promise.all([loadTracks(), loadStats()])
 }
 
 async function deleteComment(id) {
-  if (!confirm('确定删除评论 ' + id + '？')) return
-  await adminFetch('/api/admin/comments/' + id, { method: 'DELETE' })
+  if (!confirm('确定删除评论？')) return
+  try {
+    await adminFetch('/api/admin/comments/' + id, { method: 'DELETE' })
+  } catch (e) {
+    alert('删除评论失败：' + (e.message || '未知错误'))
+  }
   await loadComments()
 }
 
@@ -1610,6 +1625,8 @@ async function retrainModel(force) {
   retraining.value = true
   retrainMsg.value = ''
   retrainOk.value = false
+  trainDone.value = false
+  trainSuccessMsg.value = ''
   trainProgress.value = { percent: 0, stage: '准备训练', message: '正在提交训练任务', current_model: '', total_models: 6, running: true }
   lastRetrainStage = ''
   lastRetrainMessage = ''
@@ -1669,10 +1686,23 @@ onMounted(async () => {
   await loadModelWeights()
   if (adminToken) {
     loggedIn.value = true
+    const savedTheme = localStorage.getItem('theme')
+    if (savedTheme === 'light') { adminIsDark.value = false; document.documentElement.setAttribute('data-theme', 'light') }
     try {
       await loadStats()
     } catch {
       logout()
+      return
+    }
+    try {
+      await loadMetrics()
+    } catch {
+      // metrics load failure is not fatal, continue
+    }
+    // Auto-start training+evaluation if metrics are demo/quick or have no real evaluation data
+    if (!metricsLoading.value && (metrics.value.type === '演示评估' || !metrics.value.type || !metrics.value.model_breakdown?.length)) {
+      appendTrainingLog('info', '自动启动训练与评估...')
+      startTraining()
     }
   }
   window.addEventListener('resize', syncGenrePanelHeight)
@@ -1726,7 +1756,8 @@ form{display:flex;flex-direction:column;gap:10px;margin-top:20px}.error{color:va
 .rank-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}.rank-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;padding:20px;overflow:hidden}.rank-card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}.rank-card-head h3{font-size:15px;font-weight:700;margin:0}.rank-card-head span{font-size:11px;color:var(--color-text-muted);background:var(--color-bg);border-radius:20px;padding:3px 10px}.rank-card-list{display:flex;flex-direction:column;gap:8px}.rank-card-row{display:grid;grid-template-columns:28px 42px minmax(0,1fr) auto;grid-template-rows:none;align-items:center;gap:10px;background:var(--color-bg);border:0;border-radius:11px;padding:10px 12px;text-decoration:none;color:inherit;transition:transform .15s;animation:fadeUp .4s ease both}.rank-card-row:hover{transform:translateX(3px)}.rank-card-pos{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--color-text-muted);background:var(--color-surface)}.rank-card-pos.top{background:var(--color-primary);color:#fff}.rank-card-cov{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;color:rgba(255,255,255,.46);overflow:hidden}.rank-card-cov img{width:100%;height:100%;object-fit:cover}.rank-card-main{min-width:0;display:flex;flex-direction:column}.rank-card-main b{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rank-card-main small{font-size:11px;color:var(--color-text-muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rank-card-metric{font-size:13px;font-weight:800;color:var(--color-primary-light);background:var(--color-surface);border-radius:20px;padding:4px 10px;white-space:nowrap}
 .model-dashboard{display:flex;flex-direction:column;gap:18px}.model-hero-panel{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;background:linear-gradient(135deg,rgba(108,92,231,.18),rgba(0,206,201,.08));border:1px solid var(--color-border);border-radius:18px;padding:22px}.model-eyebrow{font-size:11px;font-weight:900;color:var(--color-accent);letter-spacing:0;text-transform:uppercase}.model-hero-panel h2{font-size:22px;margin:6px 0}.model-hero-panel p{font-size:13px;color:var(--color-text-muted);max-width:620px}.model-status-card{min-width:150px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:4px}.status-dot{width:10px;height:10px;border-radius:50%;background:var(--color-like);box-shadow:0 0 0 4px rgba(0,184,148,.12)}.status-dot.running{background:var(--color-primary);box-shadow:0 0 0 4px rgba(108,92,231,.16)}.status-dot.error{background:var(--color-dislike);box-shadow:0 0 0 4px rgba(225,112,85,.14)}.model-status-card strong{font-size:14px}.model-status-card small{font-size:12px;color:var(--color-text-muted)}.model-control-panel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;padding:14px}.sample-control{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:var(--color-text-muted)}.sample-control input{width:90px;padding:7px 10px}.model-progress-panel{display:grid;grid-template-columns:112px minmax(0,1fr);gap:18px;align-items:center;background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;padding:18px}.progress-ring{--p:0%;width:96px;height:96px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:conic-gradient(var(--color-primary) var(--p),var(--color-bg) 0);position:relative}.progress-ring::after{content:"";position:absolute;inset:10px;border-radius:50%;background:var(--color-surface)}.progress-ring span{position:relative;z-index:1;font-size:20px;font-weight:900;color:var(--color-primary-light)}.progress-body h3{font-size:17px;margin:0 0 4px}.progress-body p{font-size:13px;color:var(--color-text-muted);margin:0}.model-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}.model-kpi{background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:4px}.model-kpi span{font-size:24px;font-weight:900;background:linear-gradient(135deg,var(--color-primary),var(--color-accent));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}.model-kpi small{font-size:12px;color:var(--color-text-muted)}.model-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.model-info-card,.model-breakdown-panel{background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;padding:18px}.model-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.model-card-head h3{font-size:16px;margin:0}.model-card-head span{font-size:11px;color:var(--color-text-muted);background:var(--color-bg);border-radius:999px;padding:4px 10px}.model-chip-list{display:flex;gap:8px;flex-wrap:wrap}.model-chip{padding:7px 11px;border-radius:999px;background:var(--color-bg);border:1px solid var(--color-border);font-size:12px;font-weight:800;color:var(--color-primary-light)}.model-note{font-size:12px;color:var(--color-text-muted);line-height:1.6;margin-top:12px}.model-help-list{list-style:none;display:flex;flex-direction:column;gap:10px;margin:0;padding:0}.model-help-list li{display:flex;flex-direction:column;gap:3px;background:var(--color-bg);border-radius:10px;padding:10px 12px}.model-help-list b{font-size:13px}.model-help-list span{font-size:12px;color:var(--color-text-muted)}.model-breakdown-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.model-break-card{background:var(--color-bg);border:1px solid var(--color-border);border-radius:14px;padding:14px}.model-break-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}.model-break-title span{font-size:11px;color:var(--color-text-muted)}.model-mini-metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}.model-mini-metrics span{background:var(--color-surface);border-radius:10px;padding:9px;display:flex;flex-direction:column}.model-mini-metrics b{font-size:15px;color:var(--color-primary-light)}.model-mini-metrics small{font-size:11px;color:var(--color-text-muted);margin-top:2px}
 .models-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:10px;flex-wrap:wrap}.models-header h2{font-size:26px;font-weight:800;margin:0}.models-header h2 span{background:linear-gradient(135deg,var(--color-primary),var(--color-accent));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}.models-header-actions{display:flex;gap:8px;flex-wrap:wrap}.models-status-bar{display:flex;align-items:center;justify-content:space-between;gap:18px;background:linear-gradient(135deg,rgba(108,92,231,.16),rgba(0,206,201,.08));border:1px solid var(--color-border);border-radius:18px;padding:20px}.models-status-main{display:flex;align-items:center;gap:14px;min-width:0}.models-status-main h2{font-size:18px;margin:0 0 4px}.models-status-main p{font-size:13px;color:var(--color-text-muted);margin:0}.models-status-pill{font-size:13px;font-weight:900;border-radius:999px;padding:8px 12px;background:var(--color-surface);border:1px solid var(--color-border);white-space:nowrap}.models-status-pill.ready{color:var(--color-like)}.models-status-pill.running{color:var(--color-primary-light)}.models-status-pill.error{color:var(--color-dislike)}.models-status-side{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}.models-status-side span{min-width:86px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:13px;padding:9px 12px;display:flex;flex-direction:column}.models-status-side b{font-size:18px;background:linear-gradient(135deg,var(--color-primary),var(--color-accent));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}.models-status-side small{font-size:11px;color:var(--color-text-muted);margin-top:2px}.models-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.models-card{position:relative;overflow:hidden;background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;padding:24px;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease;cursor:default}.models-card::before{content:"";position:absolute;inset:0 0 auto;height:4px;background:var(--model-tone,var(--color-primary))}.models-card::after{content:"";position:absolute;right:-44px;top:-44px;width:120px;height:120px;border-radius:50%;background:var(--model-tone,var(--color-primary));opacity:.08;pointer-events:none;transition:opacity .2s}.models-card:hover{transform:translateY(-4px);border-color:var(--color-primary);box-shadow:0 18px 48px rgba(0,0,0,.18)}.models-card:hover::after{opacity:.15}.models-card.tone-0{--model-tone:var(--color-primary)}.models-card.tone-1{--model-tone:#0984e3}.models-card.tone-2{--model-tone:#636e72}.models-card.tone-3{--model-tone:var(--color-like)}.models-card.tone-4{--model-tone:#e17055}.models-card.tone-5{--model-tone:#e84393}.models-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.models-card-icon{width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--model-tone,var(--color-primary)),var(--color-accent));color:#fff;font-size:13px;font-weight:900}.models-card-badge{font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;background:var(--color-bg);color:var(--color-text-muted)}.models-card-badge.active{background:rgba(0,184,148,.14);color:var(--color-like)}.models-card h3{font-size:17px;margin:0 0 6px}.models-card p{min-height:38px;font-size:12px;line-height:1.55;color:var(--color-text-muted);margin:0 0 16px}.models-card-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}.models-card-stats span{display:flex;flex-direction:column;gap:2px;min-width:0}.models-card-stats b{font-size:18px;font-weight:900;color:var(--color-primary-light);font-variant-numeric:tabular-nums}.models-card-stats small{font-size:10px;color:var(--color-text-muted);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.models-weight-line{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}.models-weight-line>div:first-child{display:flex;justify-content:space-between;font-size:12px;color:var(--color-text-muted)}.models-weight-line b{color:var(--color-text);font-size:13px}.models-weight-track{height:8px;background:var(--color-bg);border-radius:999px;overflow:hidden}.models-weight-track span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--color-primary),var(--color-accent));transition:width .2s ease}.models-expand-btn{width:100%;border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);border-radius:10px;padding:8px 10px;font-size:12px;font-weight:800;cursor:pointer;transition:border-color .15s,background .15s}.models-expand-btn:hover{border-color:var(--color-primary);background:var(--color-surface-hover)}.models-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--color-border)}.models-detail-grid span{background:var(--color-bg);border-radius:10px;padding:10px;display:flex;flex-direction:column}.models-detail-grid b{font-size:15px;color:var(--color-primary-light)}.models-detail-grid small{font-size:11px;color:var(--color-text-muted);margin-top:2px}.models-progress-panel{display:grid;grid-template-columns:112px minmax(0,1fr);gap:18px;align-items:center;background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;padding:18px}.models-console-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr);gap:18px}.models-panel{background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;padding:20px}.models-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.models-panel-head h3{font-size:16px;margin:0}.models-panel-head span{font-size:11px;color:var(--color-text-muted);background:var(--color-bg);border-radius:999px;padding:4px 10px}.models-control-row{display:grid;grid-template-columns:minmax(110px,.7fr) repeat(4,auto);gap:10px;align-items:end}.models-control-row label{display:flex;flex-direction:column;gap:5px}.models-control-row small{font-size:11px;font-weight:800;color:var(--color-text-muted)}.models-control-row input{width:100%;padding:8px 10px}.models-log-list{margin-top:16px;display:flex;flex-direction:column;gap:8px;max-height:168px;overflow:auto}.models-log-row{display:grid;grid-template-columns:150px 78px minmax(0,1fr);gap:10px;align-items:center;background:var(--color-bg);border-radius:10px;padding:9px 11px;font-size:12px}.models-log-row span{color:var(--color-text-muted)}.models-log-row b{color:var(--color-primary-light)}.models-log-row small{color:var(--color-text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.models-slider-list{display:flex;flex-direction:column;gap:14px}.models-slider-row{display:grid;grid-template-columns:96px minmax(0,1fr) 48px;align-items:center;gap:12px;font-size:13px;font-weight:700}.models-slider-row span{color:var(--color-text)}.models-slider-row b{text-align:right;color:var(--color-primary-light);font-variant-numeric:tabular-nums}.models-slider-row input[type=range]{accent-color:var(--color-primary);width:100%}.models-save-btn{width:100%;margin-top:18px;justify-content:center}.models-chart{height:260px;display:grid;grid-template-columns:repeat(6,minmax(70px,1fr));gap:14px;align-items:end;padding:14px 6px 0}.models-chart-cell{height:100%;display:grid;grid-template-rows:24px minmax(0,1fr) 24px;align-items:end;text-align:center;gap:8px}.models-chart-value{font-size:12px;font-weight:900;color:var(--color-primary-light);font-variant-numeric:tabular-nums}.models-chart-bar-wrap{height:100%;display:flex;align-items:flex-end;justify-content:center;background:linear-gradient(180deg,transparent,rgba(108,92,231,.06));border-radius:12px;padding:0 14px}.models-chart-bar{width:100%;min-height:0;border-radius:12px 12px 0 0;background:linear-gradient(180deg,var(--color-primary),var(--color-accent));box-shadow:0 10px 24px rgba(108,92,231,.24);transition:height .25s ease}.models-chart-cell small{font-size:11px;color:var(--color-text-muted);white-space:nowrap}.models-history-table td,.models-history-table th{padding:10px 12px}.models-status-text{font-weight:900}.models-status-text.success{color:var(--color-like)}.models-status-text.failed{color:var(--color-dislike)}.models-status-text.running{color:var(--color-primary-light)}
-.models-card{cursor:pointer}.models-card.expanded{border-color:var(--color-primary)}.models-detail-wide{grid-column:1 / -1}.models-detail-wide b{font-size:12px;line-height:1.45}.train-config{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}.train-config label{display:flex;flex-direction:column;gap:6px}.train-config span{font-size:11px;font-weight:800;color:var(--color-text-muted)}.train-config select,.train-config input{width:100%;padding:9px 12px;background:var(--color-bg);color:var(--color-text);border:1px solid var(--color-border);border-radius:10px;font-size:13px}.train-config select:focus,.train-config input:focus{border-color:var(--color-primary)}.train-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.switch-row{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:800;color:var(--color-text-muted)}.switch{width:44px;height:26px;border:0;border-radius:999px;background:var(--color-border);position:relative;cursor:pointer;transition:background .2s}.switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .2s}.switch.on{background:var(--color-primary)}.switch.on::after{transform:translateX(18px)}.switch:disabled{opacity:.45;cursor:not-allowed}.btn-danger{border:1px solid rgba(224,85,72,.35);background:transparent;color:var(--color-dislike)}.btn-danger:hover:not(:disabled){background:rgba(224,85,72,.1)}.sample-control{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:var(--color-text-muted)}.sample-control input{width:86px;padding:8px 10px}.progress-track.striped .progress-fill{background:repeating-linear-gradient(-45deg,var(--color-primary),var(--color-primary) 8px,var(--color-primary-light) 8px,var(--color-primary-light) 16px);animation:barber 1s linear infinite}.tp-log{margin-top:12px;max-height:140px;overflow-y:auto;font-family:"SF Mono",Consolas,monospace;font-size:11px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:10px;padding:10px}.tp-log .line{padding:2px 0;color:var(--color-text-muted)}.tp-log .line.info{color:var(--color-accent)}.tp-log .line.warn{color:#f0c060}.tp-log .line.done{color:var(--color-like)}.eval-table{width:100%;border-collapse:collapse}.eval-table th,.eval-table td{padding:12px 14px;text-align:left;border-bottom:1px solid var(--color-border);font-size:13px}.eval-table th{font-size:11px;color:var(--color-text-muted);text-transform:uppercase;cursor:pointer;user-select:none}.eval-table tr:hover td{background:var(--color-surface-hover)}.eval-bar-wrap{display:flex;align-items:center;gap:8px;min-width:170px}.eval-bar{flex:1;height:6px;background:var(--color-bg);border-radius:999px;overflow:hidden}.eval-bar-fill{display:block;height:100%;border-radius:999px}.eval-bar-fill.precision{background:linear-gradient(90deg,var(--color-primary),var(--color-accent))}.eval-bar-fill.recall{background:linear-gradient(90deg,var(--color-like),var(--color-accent))}.eval-bar-fill.hitrate{background:linear-gradient(90deg,#f0c060,var(--color-dislike))}.eval-val{min-width:52px;text-align:right;color:var(--color-primary-light);font-variant-numeric:tabular-nums}.radar-section{display:grid;grid-template-columns:1fr 1fr;gap:18px}.radar-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;padding:20px}.radar-card h3{font-size:16px;margin:0 0 16px}.radar-viz{display:flex;justify-content:center;align-items:center;min-height:230px}.radar-svg{width:100%;max-width:300px}.radar-grid{fill:none;stroke:var(--color-border);stroke-width:1}.radar-grid.inner{opacity:.7}.radar-axis{stroke:var(--color-border);stroke-width:1}.radar-label{font-size:9px;fill:var(--color-text-muted);text-anchor:middle;dominant-baseline:middle}.radar-area{fill:rgba(56,189,248,.18);stroke:var(--color-primary);stroke-width:2}.radar-area.second{fill:rgba(125,211,252,.08);stroke:var(--color-accent);stroke-width:2;stroke-dasharray:6 3}.radar-dot{fill:var(--color-primary)}.radar-legend{display:flex;gap:16px;justify-content:center;margin-top:12px}.radar-legend span{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--color-text-muted)}.swatch{width:14px;height:3px;border-radius:4px;background:var(--color-primary)}.swatch.average{background:var(--color-accent)}.timeline{display:flex;flex-direction:column}.tl-item{display:grid;grid-template-columns:128px 1fr;gap:14px;padding:14px 0;border-bottom:1px solid var(--color-border)}.tl-item:last-child{border-bottom:0}.tl-time{font-size:12px;color:var(--color-text-muted)}.tl-title{font-size:14px;font-weight:800}.tl-desc{font-size:12px;color:var(--color-text-muted);margin-top:4px}.tl-tags{display:flex;gap:6px;margin-top:6px}.tl-tag{font-size:11px;border-radius:999px;background:var(--color-bg);color:var(--color-text-muted);padding:3px 8px}.tl-tag.good{background:rgba(20,184,166,.12);color:var(--color-like)}.tl-tag.bad{background:rgba(224,85,72,.12);color:var(--color-dislike)}
+.models-card{cursor:pointer}.models-card.expanded{border-color:var(--color-primary)}.models-detail-wide{grid-column:1 / -1}.models-detail-wide b{font-size:12px;line-height:1.45}.train-config{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}.train-config label{display:flex;flex-direction:column;gap:6px}.train-config span{font-size:11px;font-weight:800;color:var(--color-text-muted)}.train-config select,.train-config input{width:100%;padding:9px 12px;background:var(--color-bg);color:var(--color-text);border:1px solid var(--color-border);border-radius:10px;font-size:13px}.train-config select:focus,.train-config input:focus{border-color:var(--color-primary)}.train-actions{display:flex;flex-direction:column;gap:12px}.train-options{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.train-buttons{display:flex;align-items:center;gap:10px}.switch-row{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:800;color:var(--color-text-muted)}.switch{width:44px;height:26px;border:0;border-radius:999px;background:var(--color-border);position:relative;cursor:pointer;transition:background .2s}.switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .2s}.switch.on{background:var(--color-primary)}.switch.on::after{transform:translateX(18px)}.switch:disabled{opacity:.45;cursor:not-allowed}.btn-danger{border:1px solid rgba(224,85,72,.35);background:transparent;color:var(--color-dislike)}.btn-danger:hover:not(:disabled){background:rgba(224,85,72,.1)}.sample-control{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:var(--color-text-muted)}.sample-control input{width:86px;padding:8px 10px}.progress-track.striped .progress-fill{background:repeating-linear-gradient(-45deg,var(--color-primary),var(--color-primary) 8px,var(--color-primary-light) 8px,var(--color-primary-light) 16px);animation:barber 1s linear infinite}.tp-log{margin-top:12px;max-height:140px;overflow-y:auto;font-family:"SF Mono",Consolas,monospace;font-size:11px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:10px;padding:10px}.tp-log .line{padding:2px 0;color:var(--color-text-muted)}.tp-log .line.info{color:var(--color-accent)}.tp-log .line.warn{color:#f0c060}.tp-log .line.done{color:var(--color-like)}.eval-table{width:100%;border-collapse:collapse}.eval-table th,.eval-table td{padding:12px 14px;text-align:left;border-bottom:1px solid var(--color-border);font-size:13px}.eval-table th{font-size:11px;color:var(--color-text-muted);text-transform:uppercase;cursor:pointer;user-select:none}.eval-table tr:hover td{background:var(--color-surface-hover)}.eval-bar-wrap{display:flex;align-items:center;gap:8px;min-width:170px}.eval-bar{flex:1;height:6px;background:var(--color-bg);border-radius:999px;overflow:hidden}.eval-bar-fill{display:block;height:100%;border-radius:999px}.eval-bar-fill.precision{background:linear-gradient(90deg,var(--color-primary),var(--color-accent))}.eval-bar-fill.recall{background:linear-gradient(90deg,var(--color-like),var(--color-accent))}.eval-bar-fill.hitrate{background:linear-gradient(90deg,#f0c060,var(--color-dislike))}.eval-val{min-width:52px;text-align:right;color:var(--color-primary-light);font-variant-numeric:tabular-nums}.radar-section{display:grid;grid-template-columns:1fr 1fr;gap:18px}.radar-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;padding:20px}.radar-card h3{font-size:16px;margin:0 0 16px}.radar-viz{display:flex;justify-content:center;align-items:center;min-height:230px}.radar-svg{width:100%;max-width:300px}.radar-grid{fill:none;stroke:var(--color-border);stroke-width:1}.radar-grid.inner{opacity:.7}.radar-axis{stroke:var(--color-border);stroke-width:1}.radar-label{font-size:9px;fill:var(--color-text-muted);text-anchor:middle;dominant-baseline:middle}.radar-area{fill:rgba(56,189,248,.18);stroke:var(--color-primary);stroke-width:2}.radar-area.second{fill:rgba(125,211,252,.08);stroke:var(--color-accent);stroke-width:2;stroke-dasharray:6 3}.radar-dot{fill:var(--color-primary)}.radar-legend{display:flex;gap:16px;justify-content:center;margin-top:12px}.radar-legend span{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--color-text-muted)}.swatch{width:14px;height:3px;border-radius:4px;background:var(--color-primary)}.swatch.average{background:var(--color-accent)}.timeline{display:flex;flex-direction:column}.tl-item{display:grid;grid-template-columns:128px 1fr;gap:14px;padding:14px 0;border-bottom:1px solid var(--color-border)}.tl-item:last-child{border-bottom:0}.tl-time{font-size:12px;color:var(--color-text-muted)}.tl-title{font-size:14px;font-weight:800}.tl-desc{font-size:12px;color:var(--color-text-muted);margin-top:4px}.tl-tags{display:flex;gap:6px;margin-top:6px}.tl-tag{font-size:11px;border-radius:999px;background:var(--color-bg);color:var(--color-text-muted);padding:3px 8px}.tl-tag.good{background:rgba(20,184,166,.12);color:var(--color-like)}.tl-tag.bad{background:rgba(224,85,72,.12);color:var(--color-dislike)}
+.progress-ring.done{background:conic-gradient(var(--color-like) var(--p),var(--color-bg) 0)}.progress-ring.done::after{background:var(--color-surface)}.progress-ring.done span{color:var(--color-like);font-size:28px}.progress-fill.done{background:var(--color-like)}.models-progress-panel.done{border-color:rgba(0,184,148,.35)}
 @keyframes barber{0%{background-position:0 0}100%{background-position:32px 0}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:900px){.two-col{grid-template-columns:1fr}.topbar{flex-direction:column;gap:10px}.data-table{display:block;overflow-x:auto}.form-grid{grid-template-columns:1fr}}
@@ -1736,4 +1767,6 @@ form{display:flex;flex-direction:column;gap:10px;margin-top:20px}.error{color:va
 @media(max-width:1000px){.train-config{grid-template-columns:repeat(2,minmax(0,1fr))}.radar-section{grid-template-columns:1fr}.eval-table{display:block;overflow-x:auto}}
 @media(max-width:600px){.models-grid{grid-template-columns:1fr}.models-status-side{width:100%;display:grid;grid-template-columns:1fr 1fr}.models-status-side .btn{grid-column:1 / -1;justify-content:center}.models-control-row{grid-template-columns:1fr}.models-log-row{grid-template-columns:1fr;gap:3px}.models-slider-row{grid-template-columns:82px minmax(0,1fr) 44px}.models-progress-panel{grid-template-columns:1fr}.models-chart{height:220px;overflow-x:auto;grid-template-columns:repeat(6,64px)}}
 @media(max-width:640px){.train-config{grid-template-columns:1fr}.train-actions{align-items:stretch;flex-direction:column}.train-actions .btn{justify-content:center}.tl-item{grid-template-columns:1fr;gap:4px}}
-</style>
+
+.theme-btn{width:32px;height:32px;border-radius:50%;border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:background .2s}.theme-btn:hover{background:var(--color-surface-hover)}
+.import-progress{margin:12px 0}.import-progress p{font-size:13px;color:var(--color-text-muted)}.import-progress .progress-bar{height:6px;background:var(--color-border);border-radius:3px;margin-top:6px}.import-progress .progress-fill{height:100%;background:var(--color-primary);border-radius:3px;transition:width .3s}</style>

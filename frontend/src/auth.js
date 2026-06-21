@@ -43,4 +43,8 @@ export const auth = reactive({
   }
 })
 
+export function getUserId() {
+  return auth.userId || Number(localStorage.getItem('user_id')) || 1
+}
+
 window.addEventListener('auth-expired', () => auth.logout())

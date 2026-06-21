@@ -13,21 +13,25 @@
         <div v-else class="history-list">
           <div v-for="h in pagedHistory" :key="h.id" class="history-row">
             <router-link :to="'/track/'+h.track_id" class="history-link">
+              <span class="h-cover">
+                <img v-if="h.image_url && !imgFailed[h.track_id]" :src="h.image_url" referrerpolicy="no-referrer" @error="imgFailed[h.track_id]=true" />
+                <span v-else :style="coverStyle(h.track_id, h.genre)">{{ coverText(h.track_title) }}</span>
+              </span>
               <span class="h-time">{{ formatDate(h.listened_at) }}</span>
               <span class="h-title">{{ h.track_title }}</span>
               <span class="h-artist">{{ h.artist_name }}</span>
             </router-link>
           </div>
         </div>
-        <div class="pager"><button class="btn btn-ghost btn-sm" :disabled="page<=1" @click="page--">上一页</button><span>{{ page }} / {{ pages }}</span><button class="btn btn-ghost btn-sm" :disabled="page>=pages" @click="page++">下一页</button></div>
+        <Pagination :current="page" :total="pages" :total-items="history.length" item-name="条记录" @page-change="(p) => page = p" />
       </div>
     </template>
   </div>
 </template>
 <script setup>
-import {computed,ref,onMounted} from 'vue';import api from'../api.js';import { auth } from '../auth.js'
-function getUserId(){return auth.userId||Number(localStorage.getItem('user_id'))||0}
-const history=ref([]);const user=ref(null);const stats=ref(null);const loading=ref(true)
+import {computed,ref,onMounted,reactive} from 'vue';import api from'../api.js';import { auth, getUserId } from '../auth.js';import Pagination from '../components/Pagination.vue';import { coverStyle, coverText } from '../cover.js'
+// getUserId() imported from auth.js
+const history=ref([]);const user=ref(null);const stats=ref(null);const loading=ref(true);const imgFailed=reactive({})
 const page=ref(1);const size=20
 const pagedHistory=computed(()=>history.value.slice((page.value-1)*size,page.value*size))
 const pages=computed(()=>Math.max(1,Math.ceil(history.value.length/size)))
@@ -46,6 +50,7 @@ onMounted(async()=>{
 .history-list{display:flex;flex-direction:column;gap:2px}
 .history-row{background:var(--color-surface);border-radius:var(--radius);padding:10px 14px}
 .history-link{display:flex;align-items:center;gap:16px;text-decoration:none;color:inherit}
+.h-cover{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;font-weight:700;font-size:16px;color:rgba(255,255,255,.5)}.h-cover img{width:100%;height:100%;object-fit:cover;border-radius:8px}
 .h-time{font-size:12px;color:var(--color-text-muted);min-width:90px}
 .h-title{font-size:14px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .h-artist{font-size:13px;color:var(--color-text-muted)}.empty{text-align:center;color:var(--color-text-muted);padding:40px 0}

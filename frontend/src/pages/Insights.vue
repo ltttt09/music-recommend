@@ -54,9 +54,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import api from '../api.js'
-import { auth } from '../auth.js'
+import { auth, getUserId } from '../auth.js'
 
-function getUserId() { return auth.userId || Number(localStorage.getItem('user_id')) || 0 }
+// getUserId() imported from auth.js
 
 const user = ref(null)
 const stats = ref(null)

@@ -28,7 +28,10 @@
       <div class="recs-grid">
         <div v-for="item in recs" :key="item.id" class="rec-card">
           <router-link :to="'/track/' + item.id" class="rec-link">
-            <span class="rec-cover" :style="coverStyle(item.id, item.genre)">{{ coverText(item.title) }}</span>
+            <span class="rec-cover">
+              <img v-if="item.image_url && !imgFailed[item.id]" :src="item.image_url" referrerpolicy="no-referrer" @error="imgFailed[item.id]=true" />
+              <span v-else :style="coverStyle(item.id, item.genre)">{{ coverText(item.title) }}</span>
+            </span>
             <div class="rec-meta">
               <span class="rec-title">{{ item.title }}</span>
               <span class="rec-artist">{{ item.artist_name }}</span>
@@ -128,13 +131,13 @@
 
 <script setup>
 import { reactive, ref, onMounted } from 'vue'; import api from '../api.js'
-import { auth } from '../auth.js'
+import { auth, getUserId } from '../auth.js'
 import TrackList from '../components/TrackList.vue'
 import { coverStyle, coverText } from '../cover.js'
 import { useRecommendations } from '../composables/useRecommendations.js'
 import { playTrack } from '../audio.js'
 
-function getUserId() { return auth.userId || Number(localStorage.getItem('user_id')) || 0 }
+// getUserId() imported from auth.js
 
 const MODEL_NAMES = { hybrid:'混合推荐', itemcf:'物品协同过滤', usercf:'用户协同过滤', svd:'矩阵分解SVD', song2vec:'歌曲嵌入', sequence:'序列推荐', cold_start:'冷启动', genre:'流派回退' }
 const models=ref(['hybrid'])
@@ -265,7 +268,7 @@ async function fetchDiscovery() {
 .recs-grid{display:flex;flex-direction:column;gap:2px}
 .rec-card{background:var(--color-surface);border-radius:var(--radius);padding:12px 14px;display:flex;align-items:center;justify-content:space-between}
 .rec-link{display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;flex:1;min-width:0}
-.rec-cover{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:Arial,"Microsoft YaHei",sans-serif;font-weight:700;font-size:16px;color:rgba(255,255,255,.5);flex-shrink:0}
+.rec-cover{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:Arial,"Microsoft YaHei",sans-serif;font-weight:700;font-size:16px;color:rgba(255,255,255,.5);flex-shrink:0;overflow:hidden}.rec-cover img{width:100%;height:100%;object-fit:cover;border-radius:8px}
 .rec-meta{display:flex;flex-direction:column;min-width:0}.rec-title{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rec-artist{font-size:12px;color:var(--color-text-muted);margin-top:2px}.rec-reason{font-size:12px;color:var(--color-accent);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rec-genre{font-size:10px;color:var(--color-text-muted);margin-top:2px;opacity:.7}
 .rec-actions{display:flex;align-items:center;gap:10px;flex-shrink:0}.rec-score{font-size:13px;font-weight:700;color:var(--color-accent)}
 .btn-like-icon,.btn-dislike-icon,.btn-info-icon{width:28px;height:28px;border-radius:50%;border:none;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer}

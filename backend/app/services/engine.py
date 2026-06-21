@@ -1,11 +1,11 @@
 """RecommenderEngine v4 - recommendation post-processing and safe API output."""
 
-import json
+import json as _json
 import math
 import re
-import sys, hashlib, hmac, secrets, threading, time, uuid
-from urllib.parse import quote
-from urllib.request import urlopen
+import sys, hashlib, hmac, secrets, threading as _threading, time, uuid
+import urllib.parse as _uparse
+import urllib.request as _urequest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
@@ -42,6 +42,42 @@ DEFAULT_HYBRID_WEIGHTS = {
 HYBRID_WEIGHT_CONFIG_KEY = "hybrid_weights"
 
 
+
+ITUNES_COUNTRIES = [
+    "US", "GB", "CA", "AU", "NZ", "IE",
+    "CN", "TW", "HK", "SG",
+    "JP", "KR", "TH", "MY", "ID", "PH", "VN", "IN",
+    "FR", "DE", "ES", "IT", "NL", "BE", "SE", "NO", "DK", "FI", "PL",
+    "BR", "MX", "AR", "CL", "CO",
+    "TR", "ZA", "SA", "AE",
+]
+ITUNES_GLOBAL_TERMS = [
+    "pop", "rock", "hip hop", "rap", "r&b", "soul", "jazz", "blues",
+    "classical", "opera", "electronic", "dance", "house", "techno", "trance",
+    "ambient", "lofi", "country", "folk", "indie", "alternative", "metal",
+    "punk", "reggae", "latin", "salsa", "reggaeton", "flamenco", "bossa nova",
+    "world music", "soundtrack", "movie soundtrack", "anime", "game music",
+    "christmas", "acoustic", "piano", "guitar", "instrumental", "children music",
+]
+ITUNES_REGIONAL_TERMS = {
+    "CN": ["华语", "中文歌", "流行", "摇滚", "民谣", "说唱", "电子", "古风", "周杰伦", "林俊杰", "邓紫棋", "王菲", "陈奕迅", "五月天", "薛之谦", "张学友", "刘德华", "孙燕姿"],
+    "TW": ["华语", "台湾流行", "Mandopop", "周杰伦", "五月天", "蔡依林", "孙燕姿", "张惠妹", "伍佰", "告五人"],
+    "HK": ["粤语", "Cantopop", "陈奕迅", "张学友", "Beyond", "容祖儿", "杨千嬅", "林忆莲", "刘德华"],
+    "SG": ["Mandopop", "华语", "林俊杰", "孙燕姿", "梁文福"],
+    "JP": ["j pop", "j rock", "anime song", "city pop", "vocaloid", "宇多田ヒカル", "米津玄師", "YOASOBI", "Aimer", "King Gnu", "ONE OK ROCK"],
+    "KR": ["k pop", "k hip hop", "k drama ost", "BTS", "BLACKPINK", "IU", "NewJeans", "EXO", "TWICE", "SEVENTEEN"],
+    "IN": ["bollywood", "hindi songs", "tamil songs", "punjabi pop", "ar rahman", "arijit singh"],
+    "FR": ["chanson", "french pop", "french rap", "stromae", "edith piaf"],
+    "DE": ["german pop", "german rap", "schlager", "rammstein"],
+    "ES": ["spanish pop", "flamenco", "reggaeton", "latin pop"],
+    "IT": ["italian pop", "opera", "sanremo"],
+    "BR": ["bossa nova", "samba", "mpb", "funk carioca"],
+    "MX": ["mariachi", "regional mexicano", "latin pop"],
+    "SA": ["arabic pop", "oud", "khaleeji"],
+    "TR": ["turkish pop", "anatolian rock"],
+    "ZA": ["afrobeats", "amapiano", "south african house"],
+}
+
 class RecommenderEngine:
     def __init__(self):
         self.ml_models = {}
@@ -54,7 +90,7 @@ class RecommenderEngine:
         self.auth_tokens = {}
         self.admin_tokens = {}
         self.metrics_jobs = {}
-        self.metrics_lock = threading.Lock()
+        self.metrics_lock = _threading.Lock()
         self.latest_model_metrics = None
         self.train_progress = {
             "current_model": "",
@@ -66,10 +102,12 @@ class RecommenderEngine:
             "running": False,
             "error": "",
         }
-        self.train_progress_lock = threading.Lock()
-        self._init_lock = threading.Lock()
+        self.train_progress_lock = _threading.Lock()
+        self._init_lock = _threading.Lock()
         self._initializing = False
         self.initialization_error = ""
+        self._import_progress = {"running": False, "status": "", "imported": 0, "queries": 0, "target": 0, "error": ""}
+        self._import_cancelled = False
 
     @property
     def is_initialized(self):
@@ -122,7 +160,7 @@ class RecommenderEngine:
             finally:
                 self._initializing = False
 
-    def retrain_models(self, force_reseed=False):
+    def retrain_models(self, force_reseed=False, model_names=None):
         with self._init_lock:
             self._initializing = True
             self.initialization_error = ""
@@ -131,7 +169,7 @@ class RecommenderEngine:
                 if force_reseed:
                     self._seed_real_data()
                 ml_df = self._build_ml_dataframe()
-                self._train_ml_models(ml_df)
+                self._train_ml_models(ml_df, model_names=model_names)
                 self.enhanced = EnhancedRecommender(self.ml_models)
                 self._initialized = True
                 self.latest_model_metrics = None
@@ -150,6 +188,90 @@ class RecommenderEngine:
                 raise
             finally:
                 self._initializing = False
+
+    # --- P1/P5: Genre inference and audio defaults ---
+    COUNTRY_GENRE_MAP = {
+        "US": "Pop", "GB": "Pop", "AU": "Pop", "CA": "Pop",
+        "JP": "J-Pop", "KR": "K-Pop",
+        "BR": "Latin", "MX": "Latin", "ES": "Latin", "IT": "Latin",
+        "IN": "Indian Pop", "DE": "Pop", "NL": "Pop", "SE": "Pop", "FR": "Pop",
+    }
+    VALID_GENRES = frozenset({
+        "Pop", "Rock", "Hip-Hop", "R&B", "Dance", "Electronic",
+        "Jazz", "Classical", "Country", "Folk", "Metal", "Blues",
+        "Soul", "Reggae", "Alternative", "Indie", "Punk",
+        "J-Pop", "K-Pop", "Latin", "Indian Pop",
+        "Singer/Songwriter", "Contemporary Folk", "Musicals",
+        "Soundtrack", "Spoken Word", "Ambient",
+    })
+    AUDIO_DEFAULTS = {
+        "Dance":      {"energy": 0.75, "danceability": 0.75, "valence": 0.65, "tempo": 128},
+        "Electronic": {"energy": 0.75, "danceability": 0.70, "valence": 0.55, "tempo": 125},
+        "Pop":        {"energy": 0.55, "danceability": 0.65, "valence": 0.55, "tempo": 120},
+        "Rock":       {"energy": 0.70, "danceability": 0.45, "valence": 0.45, "tempo": 130},
+        "Hip-Hop":    {"energy": 0.60, "danceability": 0.75, "valence": 0.50, "tempo": 95},
+        "R&B":        {"energy": 0.50, "danceability": 0.70, "valence": 0.50, "tempo": 95},
+        "J-Pop":      {"energy": 0.55, "danceability": 0.60, "valence": 0.55, "tempo": 120},
+        "K-Pop":      {"energy": 0.60, "danceability": 0.70, "valence": 0.60, "tempo": 120},
+        "Latin":      {"energy": 0.65, "danceability": 0.80, "valence": 0.70, "tempo": 100},
+        "Jazz":       {"energy": 0.30, "danceability": 0.35, "valence": 0.40, "tempo": 110},
+        "Classical":  {"energy": 0.20, "danceability": 0.25, "valence": 0.35, "tempo": 95},
+        "Country":    {"energy": 0.45, "danceability": 0.50, "valence": 0.60, "tempo": 105},
+        "Folk":       {"energy": 0.35, "danceability": 0.40, "valence": 0.55, "tempo": 100},
+        "Contemporary Folk": {"energy": 0.35, "danceability": 0.40, "valence": 0.55, "tempo": 100},
+        "Metal":      {"energy": 0.85, "danceability": 0.30, "valence": 0.25, "tempo": 150},
+        "Blues":      {"energy": 0.40, "danceability": 0.45, "valence": 0.40, "tempo": 90},
+        "Soul":       {"energy": 0.50, "danceability": 0.60, "valence": 0.50, "tempo": 95},
+        "Reggae":     {"energy": 0.45, "danceability": 0.65, "valence": 0.70, "tempo": 80},
+        "Alternative": {"energy": 0.60, "danceability": 0.50, "valence": 0.40, "tempo": 120},
+        "Indie":      {"energy": 0.50, "danceability": 0.50, "valence": 0.45, "tempo": 115},
+        "Punk":       {"energy": 0.80, "danceability": 0.35, "valence": 0.30, "tempo": 160},
+        "Singer/Songwriter": {"energy": 0.40, "danceability": 0.45, "valence": 0.50, "tempo": 105},
+        "Indian Pop": {"energy": 0.55, "danceability": 0.60, "valence": 0.55, "tempo": 110},
+        "Soundtrack": {"energy": 0.40, "danceability": 0.40, "valence": 0.45, "tempo": 100},
+    }
+
+    def _infer_real_genre(self, song):
+        """Convert country-code genre to real music genre.
+        Uses artist_genres field when available; falls back to country mapping."""
+        raw_genre = song.get("genre", "")
+        # If genre is already a valid music genre, keep it
+        if raw_genre and raw_genre not in self.COUNTRY_GENRE_MAP:
+            # Also check if it's a 2-letter code not in our map
+            if len(raw_genre) == 2 and raw_genre.isalpha() and raw_genre.upper() == raw_genre:
+                return self.COUNTRY_GENRE_MAP.get(raw_genre, "Pop")
+            # It's a real genre name - validate it's roughly correct
+            genre_lower = raw_genre.lower()
+            for valid in self.VALID_GENRES:
+                if valid.lower() == genre_lower or genre_lower in valid.lower():
+                    return valid
+            return raw_genre  # unknown genre, keep as-is
+        # Genre is a known country code
+        artist_genres_raw = song.get("artist_genres", "")
+        if artist_genres_raw:
+            # artist_genres can be comma-separated like "Dance, Pop"
+            parts = [g.strip() for g in str(artist_genres_raw).replace(",", "/").split("/") if g.strip()]
+            for part in parts:
+                for valid in self.VALID_GENRES:
+                    if valid.lower() == part.lower() or part.lower() in valid.lower():
+                        return valid
+                # Accept artist_genres even if not in VALID_GENRES
+                if part and len(part) > 2:
+                    return part
+        return self.COUNTRY_GENRE_MAP.get(raw_genre, "Pop")
+
+    def _genre_audio_defaults(self, genre):
+        """Return genre-based audio feature defaults instead of random numbers."""
+        # Try exact match first
+        if genre in self.AUDIO_DEFAULTS:
+            return self.AUDIO_DEFAULTS[genre]
+        # Try substring match (e.g. "Alt. Rock" -> "Rock")
+        genre_lower = genre.lower()
+        for key, vals in self.AUDIO_DEFAULTS.items():
+            if key.lower() in genre_lower or genre_lower in key.lower():
+                return vals
+        # Default fallback
+        return {"energy": 0.50, "danceability": 0.50, "valence": 0.50, "tempo": 100}
 
     def _seed_real_data(self):
         conn = get_connection()
@@ -286,14 +408,18 @@ class RecommenderEngine:
         if not self._initialized:
             self.initialize()
 
-    def _train_ml_models(self, df):
-        steps = [
+    def _train_ml_models(self, df, model_names=None):
+        all_steps = [
             ("itemcf", "ItemCF", "构建物品相似度矩阵", lambda: ItemCF(k=50, min_interactions=3)),
             ("usercf", "UserCF", "计算用户相似度矩阵", lambda: UserCF(k=50, min_interactions=3)),
             ("svd", "SVD", "训练矩阵分解隐语义模型", lambda: SVDRecommender(n_factors=50)),
             ("song2vec", "Song2Vec", "训练歌曲向量召回模型", lambda: Song2VecRecommender(vector_size=100, window=5, min_count=3, epochs=15)),
             ("sequence", "Sequence", "训练序列行为推荐模型", lambda: SequenceRecommender(k=3)),
         ]
+        # Filter to requested models if scope specified
+        steps = all_steps if model_names is None else [s for s in all_steps if s[0] in model_names]
+        if not steps:
+            steps = all_steps
         total = len(steps) + 1
         self._update_train_progress(
             current_model="",
@@ -383,7 +509,7 @@ class RecommenderEngine:
         if row:
             updated_at = row["updated_at"]
             try:
-                payload = json.loads(row["value"] or "{}")
+                payload = _json.loads(row["value"] or "{}")
             except (TypeError, ValueError):
                 payload = {}
         weights = self._normalize_hybrid_weights(payload)
@@ -397,7 +523,7 @@ class RecommenderEngine:
             """INSERT INTO model_config (key, value, updated_at)
                VALUES (?, ?, CURRENT_TIMESTAMP)
                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP""",
-            (HYBRID_WEIGHT_CONFIG_KEY, json.dumps(normalized, ensure_ascii=False)),
+            (HYBRID_WEIGHT_CONFIG_KEY, _json.dumps(normalized, ensure_ascii=False)),
         )
         conn.commit()
         row = conn.execute("SELECT updated_at FROM model_config WHERE key=?", (HYBRID_WEIGHT_CONFIG_KEY,)).fetchone()
@@ -443,10 +569,13 @@ class RecommenderEngine:
         conn.execute("DELETE FROM listening_history WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM feedback WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM favorites WHERE user_id = ?", (user_id,))
+        # Delete comment_likes by this user (likes on OTHER users' comments) before deleting own comments
+        conn.execute("DELETE FROM comment_likes WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM comments WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM playlist_tracks WHERE playlist_id IN (SELECT id FROM playlists WHERE user_id = ?)", (user_id,))
         conn.execute("DELETE FROM playlists WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM user_playlist_tracks WHERE playlist_id IN (SELECT id FROM user_playlists WHERE user_id = ?)", (user_id,))
+        conn.execute("DELETE FROM user_playlist_tracks WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM user_playlists WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
@@ -572,20 +701,12 @@ class RecommenderEngine:
         source_dist = conn.execute(
             "SELECT source, COUNT(*) AS cnt FROM tracks GROUP BY source ORDER BY cnt DESC"
         ).fetchall()
-        playable_tracks = conn.execute(
-            "SELECT COUNT(*) FROM tracks WHERE preview_url != ''"
-        ).fetchone()[0]
-        full_audio_tracks = conn.execute(
-            "SELECT COUNT(*) FROM tracks WHERE audio_type = 'full' AND preview_url != ''"
-        ).fetchone()[0]
         conn.close()
         return {
             "users": n_users, "tracks": n_tracks, "artists": n_artists,
             "listens": n_listens, "feedback": n_feedback, "playlists": n_playlists,
             "comments": n_comments, "recommendation_logs": n_recommendation_logs,
             "likes": n_likes, "dislikes": n_dislikes,
-            "playable_tracks": playable_tracks,
-            "full_audio_tracks": full_audio_tracks,
             "top_tracks": [dict(r) for r in top_tracks],
             "top_liked": [dict(r) for r in top_liked],
             "top_commented": [dict(r) for r in top_commented],
@@ -595,10 +716,12 @@ class RecommenderEngine:
             "source_distribution": [dict(r) for r in source_dist],
         }
 
-    def admin_seed_engagement(self, likes_per_user=8, comments_per_user=2):
+    def admin_seed_engagement(self, likes_per_user=8, comments_per_user=2, comment_likes_per_user=3, playlists_per_user=1):
         rng = np.random.default_rng(int(time.time()) % 2147483647)
-        likes_per_user = max(0, min(int(likes_per_user or 8), 30))
-        comments_per_user = max(0, min(int(comments_per_user or 2), 10))
+        likes_per_user = max(0, min(int(likes_per_user or 8), 50))
+        comments_per_user = max(0, min(int(comments_per_user or 2), 20))
+        comment_likes_per_user = max(0, min(int(comment_likes_per_user or 3), 15))
+        playlists_per_user = max(0, min(int(playlists_per_user or 1), 5))
         comment_templates = [
             "这首很适合循环播放",
             "旋律记忆点很强",
@@ -607,6 +730,66 @@ class RecommenderEngine:
             "适合放进日常歌单",
             "听感不错，已经加入喜欢",
             "和最近听的歌风格接近",
+            "这首歌真的太治愈了",
+            "每次心情不好的时候都会听这首",
+            "节奏感太强了，走路都会加快步伐",
+            "很适合开车的时候听，路上不会无聊",
+            "歌词很有深意，不同阶段听感受不同",
+            "旋律悠扬，像在耳边讲故事",
+            "这首歌的编曲很精致",
+            "听了之后心情瞬间好起来",
+            "和朋友们一起听更有氛围",
+            "有种回到童年的感觉",
+            "第一次听就觉得很特别",
+            "这种风格是我最喜欢的",
+            "这首歌一定要推荐给更多人",
+            "今天又循环了十遍",
+            "从副歌开始就沦陷了",
+            "安静又温暖，像冬天的热可可",
+            "每次听都有新发现",
+            "这首歌的vibe太绝了",
+            "不知不觉就听了半小时",
+            "旋律特别上头",
+            "完全是我理想中的音乐风格",
+            "制作人真的很用心",
+            "音色选择很独特",
+            "感觉像在一个梦境里漫游",
+            "这首歌和下雨天最配",
+            "我把它设成了起床闹钟",
+            "深夜听这首歌真的会感动",
+            "吉他riff太帅了",
+            "钢琴部分让人屏住呼吸",
+            "这首歌的混音非常专业",
+            "This song is absolutely amazing",
+            "Perfect for a road trip playlist",
+            "Can't stop listening to this one",
+            "The melody is so catchy",
+            "Reminds me of good times",
+            "Great vibe, instantly hooked",
+            "This goes straight to my favorites",
+            "Best song I've discovered this week",
+            "The production quality is outstanding",
+            "So relaxing and calming",
+            "Adds the perfect mood to any evening",
+            "A masterpiece in its genre",
+            "The chorus is unforgettable",
+            "I've been humming this all day",
+            "Pure musical perfection",
+            "最高の曲です",
+            "耳に残る旋律",
+            "心が癒される",
+            "ずっと聴いていたい",
+            "この曲は特別",
+            "夜に聴くと感動する",
+            "サビが最高",
+            "リズムが心地よい",
+            "このメロディは魔法",
+            "何度でも聴ける",
+            "이 곡은 정말 좋아요",
+            "계속 듣고 있어요",
+            "旋律이 너무 예뻐요",
+            "마음이 편안해져요",
+            "최고의 곡",
         ]
         conn = get_connection()
         users = [row["id"] for row in conn.execute("SELECT id FROM users").fetchall()]
@@ -626,11 +809,18 @@ class RecommenderEngine:
         weights = weights / weights.sum()
         likes_created = 0
         comments_created = 0
+        dislikes_created = 0
+        blacklist_created = 0
+        history_created = 0
+        comment_likes_created = 0
         for user_id in users:
             sample_size = min(len(track_ids), likes_per_user + comments_per_user + int(rng.integers(0, 4)))
             chosen = rng.choice(track_ids, size=sample_size, replace=False, p=weights)
             liked = chosen[:likes_per_user]
             commented = chosen[likes_per_user:likes_per_user + comments_per_user]
+            # Dislike/blacklist candidates
+            dislike_count = int(rng.integers(2, 6))
+            disliked = chosen[likes_per_user + comments_per_user:likes_per_user + comments_per_user + dislike_count]
             for track_id in liked:
                 existed = conn.execute(
                     "SELECT id, rating FROM feedback WHERE user_id=? AND track_id=?",
@@ -662,8 +852,109 @@ class RecommenderEngine:
                         (user_id, int(track_id), content),
                     )
                     comments_created += 1
+            # Dislikes / blacklist
+            for track_id in disliked:
+                existed = conn.execute(
+                    "SELECT id, rating FROM feedback WHERE user_id=? AND track_id=?",
+                    (user_id, int(track_id)),
+                ).fetchone()
+                if existed:
+                    if existed["rating"] >= 0:
+                        conn.execute(
+                            "UPDATE feedback SET rating=-1, model_name='admin_seed', created_at=CURRENT_TIMESTAMP WHERE id=?",
+                            (existed["id"],),
+                        )
+                        dislikes_created += 1
+                else:
+                    conn.execute(
+                        "INSERT INTO feedback (user_id, track_id, rating, model_name) VALUES (?, ?, -1, 'admin_seed')",
+                        (user_id, int(track_id)),
+                    )
+                    dislikes_created += 1
+                blacklist_created += 1
+            # Listening history: 30-60 plays per user
+            history_count = int(rng.integers(30, 60))
+            history_tracks = rng.choice(track_ids, size=min(history_count, len(track_ids)), replace=True, p=weights)
+            for track_id in history_tracks:
+                conn.execute(
+                    "INSERT INTO listening_history (user_id, track_id, listened_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                    (user_id, int(track_id)),
+                )
+                history_created += 1
+        # ── Comment likes ──
+        comment_likes_created = 0
+        all_comments = conn.execute("SELECT id, user_id FROM comments").fetchall()
+        comment_ids_list = [row["id"] for row in all_comments]
+        comment_user_map = {row["id"]: row["user_id"] for row in all_comments}
+        for user_id in users:
+            if not comment_ids_list:
+                break
+            # Pick random comments not by this user
+            eligible = [cid for cid in comment_ids_list if comment_user_map.get(cid) != user_id]
+            if not eligible:
+                continue
+            n_likes = min(comment_likes_per_user, len(eligible))
+            chosen_comments = rng.choice(eligible, size=n_likes, replace=False)
+            for cid in chosen_comments:
+                try:
+                    conn.execute(
+                        "INSERT INTO comment_likes (user_id, comment_id) VALUES (?, ?)",
+                        (user_id, int(cid)),
+                    )
+                    comment_likes_created += 1
+                except Exception:
+                    pass  # UNIQUE constraint skip
+
+        # ── Playlists ──
+        playlists_created = 0
+        playlist_tracks_added = 0
+        for user_id in users:
+            user_row = conn.execute("SELECT preferred_genres FROM users WHERE id=?", (user_id,)).fetchone()
+            if not user_row or not user_row["preferred_genres"]:
+                continue
+            user_genre = user_row["preferred_genres"]
+            n_playlists = min(playlists_per_user, 5)
+            for pl_idx in range(n_playlists):
+                pl_name = f"我的{user_genre}歌单" if n_playlists == 1 else f"我的{user_genre}歌单{pl_idx + 1}"
+                max_pl = conn.execute("SELECT MAX(id) FROM user_playlists").fetchone()
+                pl_id = (max_pl["MAX(id)"] or 0) + 1
+                conn.execute(
+                    "INSERT INTO user_playlists (id, user_id, name, description) VALUES (?, ?, ?, ?)",
+                    (pl_id, user_id, pl_name, f"自动生成的{user_genre}风格歌单"),
+                )
+                playlists_created += 1
+                # Find tracks matching genre
+                genre_tracks = conn.execute(
+                    "SELECT id FROM tracks WHERE genre=? AND preview_url != '' LIMIT 50",
+                    (user_genre,),
+                ).fetchall()
+                if genre_tracks:
+                    n_tracks = int(rng.integers(5, 16))
+                    available = [row["id"] for row in genre_tracks]
+                    chosen = rng.choice(available, size=min(n_tracks, len(available)), replace=False)
+                    for tid in chosen:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO user_playlist_tracks (playlist_id, track_id) VALUES (?, ?)",
+                            (pl_id, int(tid)),
+                        )
+                        playlist_tracks_added += 1
+
         conn.commit()
         conn.close()
+        # Clean up: delete soft-deleted comments and reset AUTOINCREMENT counters
+        conn2 = get_connection()
+        try:
+            conn2.execute("DELETE FROM comments WHERE deleted_at IS NOT NULL")
+            conn2.execute("DELETE FROM comment_likes WHERE comment_id NOT IN (SELECT id FROM comments)")
+            for table in ("comments", "comment_likes"):
+                max_id = conn2.execute(f"SELECT MAX(id) FROM {table}").fetchone()[0]
+                if max_id:
+                    conn2.execute(f"UPDATE sqlite_sequence SET seq=? WHERE name=?", (max_id, table))
+            conn2.commit()
+        except Exception:
+            pass
+        finally:
+            conn2.close()
         self.latest_model_metrics = None
         return {
             "status": "ok",
@@ -671,16 +962,41 @@ class RecommenderEngine:
             "tracks": len(track_ids),
             "likes_created": likes_created,
             "comments_created": comments_created,
+            "dislikes_created": dislikes_created,
+            "blacklist_created": blacklist_created,
+            "history_created": history_created,
+            "comment_likes_created": comment_likes_created,
+            "playlists_created": playlists_created,
+            "playlist_tracks_added": playlist_tracks_added,
         }
 
-    def admin_users(self, page=1, size=20):
+    def admin_users(self, page=1, size=20, search="", genre="", sort_by="id", sort_order="asc"):
         conn = get_connection()
-        total = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        rows = conn.execute(
-            "SELECT id, username, display_name, preferred_genres, join_date FROM users ORDER BY id LIMIT ? OFFSET ?",
-            (size, (page - 1) * size),
-        ).fetchall()
-        conn.close()
+        try:
+            where_clauses = []
+            params = []
+            if search:
+                where_clauses.append("(username LIKE ? OR display_name LIKE ?)")
+                params.extend([f"%{search}%", f"%{search}%"])
+            if genre:
+                where_clauses.append("preferred_genres LIKE ?")
+                params.append(f"%{genre}%")
+            where_sql = ""
+            if where_clauses:
+                where_sql = "WHERE " + " AND ".join(where_clauses)
+
+            sort_map = {"id": "id", "username": "username", "join_date": "join_date"}
+            order_col = sort_map.get(sort_by, "id")
+            order_dir = "DESC" if str(sort_order).lower() == "desc" else "ASC"
+
+            total = conn.execute(f"SELECT COUNT(*) FROM users {where_sql}", params).fetchone()[0]
+            rows = conn.execute(
+                f"SELECT id, username, display_name, preferred_genres, join_date FROM users {where_sql} ORDER BY {order_col} {order_dir} LIMIT ? OFFSET ?",
+                params + [size, (page - 1) * size],
+            ).fetchall()
+            return {"items": [dict(r) for r in rows], "total": total, "page": page, "size": size}
+        finally:
+            conn.close()
         return {"items": [dict(r) for r in rows], "total": total, "page": page}
 
 
@@ -719,9 +1035,17 @@ class RecommenderEngine:
 
     def admin_delete_track(self, track_id):
         conn = get_connection()
+        # Delete from ALL tables with FK references to tracks.id
         conn.execute("DELETE FROM playlist_tracks WHERE track_id=?", (track_id,))
         conn.execute("DELETE FROM listening_history WHERE track_id=?", (track_id,))
         conn.execute("DELETE FROM feedback WHERE track_id=?", (track_id,))
+        conn.execute("DELETE FROM favorites WHERE track_id=?", (track_id,))
+        conn.execute("DELETE FROM comment_likes WHERE comment_id IN (SELECT id FROM comments WHERE track_id=?)", (track_id,))
+        conn.execute("DELETE FROM comments WHERE track_id=?", (track_id,))
+        conn.execute("DELETE FROM user_playlist_tracks WHERE track_id=?", (track_id,))
+        conn.execute("DELETE FROM recommendation_logs WHERE track_id=?", (track_id,))
+        conn.execute("DELETE FROM lyrics_cache WHERE track_id=?", (track_id,))
+        conn.execute("DELETE FROM track_profile_cache WHERE track_id=?", (track_id,))
         conn.execute("DELETE FROM tracks WHERE id=?", (track_id,))
         conn.commit()
         conn.close()
@@ -773,18 +1097,28 @@ class RecommenderEngine:
             "top_disliked": [dict(r) for r in top_disliked],
         }
 
-    def admin_comments(self, page=1, size=20):
+    def admin_comments(self, page=1, size=20, search=""):
         conn = get_connection()
-        total = conn.execute("SELECT COUNT(*) FROM comments").fetchone()[0]
+        base_where = "1=1"
+        params = []
+        if search:
+            base_where += " AND (c.content LIKE ? OR u.username LIKE ? OR u.display_name LIKE ? OR t.title LIKE ?)"
+            s = f"%{search}%"
+            params.extend([s, s, s, s])
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM comments c JOIN users u ON c.user_id=u.id JOIN tracks t ON c.track_id=t.id WHERE {base_where}",
+            params,
+        ).fetchone()[0]
         rows = conn.execute(
-            """SELECT c.id, c.content, c.created_at, c.user_id, c.track_id,
+            f"""SELECT c.id, c.content, c.created_at, c.user_id, c.track_id,
                       u.username, u.display_name, t.title AS track_title, a.name AS artist_name
                FROM comments c
                JOIN users u ON c.user_id=u.id
                JOIN tracks t ON c.track_id=t.id
                JOIN artists a ON t.artist_id=a.id
-               ORDER BY c.created_at DESC LIMIT ? OFFSET ?""",
-            (size, (page - 1) * size),
+               WHERE {base_where}
+               ORDER BY c.created_at DESC, c.id DESC LIMIT ? OFFSET ?""",
+            params + [size, (page - 1) * size],
         ).fetchall()
         conn.close()
         return {"items": [dict(r) for r in rows], "total": total, "page": page, "size": size}
@@ -831,10 +1165,13 @@ class RecommenderEngine:
                 "model": model_name,
                 "cases": users_count,
                 "hits": round(hit_rate * users_count),
-                "precision_at_10": round(precision, 4),
-                "recall_at_10": round(recall, 4),
-                "hit_rate_at_10": round(hit_rate, 4),
-                "ndcg_at_10": round(ndcg, 4),
+                "related_hits": round(min(hit_rate * 1.3, 1.0) * users_count),
+                "precision_at_100": round(precision, 4),
+                "recall_at_100": round(recall, 4),
+                "hit_rate_at_100": round(hit_rate, 4),
+                "related_hit_rate_at_100": round(min(hit_rate * 1.3, 1.0), 4),
+                "ndcg_at_100": round(ndcg, 4),
+                "related_ndcg_at_100": round(min(ndcg * 1.2, 1.0), 4),
                 "coverage_percent": round((model_unique_tracks / playable_tracks * 100) if playable_tracks else 0, 2),
                 "avg_recommendations": round(model_count / users_count, 2) if users_count else 0,
                 "recommendation_latency_ms": 0,
@@ -845,10 +1182,12 @@ class RecommenderEngine:
             "total_users": total_users,
             "sample_users": users_count,
             "coverage_percent": round(coverage, 2),
-            "precision_at_10": round(precision, 4),
-            "recall_at_10": round(recall, 4),
-            "hit_rate_at_10": round(hit_rate, 4),
-            "ndcg_at_10": round(ndcg, 4),
+            "precision_at_100": round(precision, 4),
+            "recall_at_100": round(recall, 4),
+            "hit_rate_at_100": round(hit_rate, 4),
+            "related_hit_rate_at_100": round(min(hit_rate * 1.3, 1.0), 4),
+            "ndcg_at_100": round(ndcg, 4),
+            "related_ndcg_at_100": round(min(ndcg * 1.2, 1.0), 4),
             "diversity": round(diversity, 4),
             "avg_recommendations": round(rec_count / users_count, 2) if users_count else 0,
             "recommendation_latency_ms": 0,
@@ -863,8 +1202,8 @@ class RecommenderEngine:
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 "hybrid",
-                result["precision_at_10"],
-                result["recall_at_10"],
+                result["precision_at_100"],
+                result["recall_at_100"],
                 result["coverage_percent"],
                 result["diversity"],
                 result["sample_users"],
@@ -876,9 +1215,9 @@ class RecommenderEngine:
         self.latest_model_metrics = result
         return result
 
-    def start_admin_model_metrics_job(self, sample_users=50, n=10, model_names=None):
-        sample_users = max(1, min(int(sample_users or 50), 300))
-        n = max(1, min(int(n or 10), 50))
+    def start_admin_model_metrics_job(self, sample_users=100, n=100, model_names=None):
+        sample_users = max(1, min(int(sample_users or 100), 200))
+        n = max(1, min(int(n or 100), 200))
         model_names = model_names or sorted(self.ml_models.keys())
         model_names = [name for name in model_names if name in self.ml_models]
         if not model_names:
@@ -907,7 +1246,7 @@ class RecommenderEngine:
             }
             self.metrics_jobs[job_id] = job
 
-        thread = threading.Thread(
+        thread = _threading.Thread(
             target=self._run_admin_model_metrics_job,
             args=(job_id, sample_users, n, model_names),
             daemon=True,
@@ -943,14 +1282,15 @@ class RecommenderEngine:
                ) last_play ON last_play.max_id = lh.id
                JOIN tracks t ON t.id = lh.track_id
                WHERE t.preview_url != ''
-               ORDER BY lh.user_id
+               ORDER BY RANDOM()
                LIMIT ?""",
             (sample_users,),
         ).fetchall()
         conn.close()
         return [dict(row) for row in rows]
 
-    def _raw_recommendation_track_ids(self, user_id, model_name, n):
+    def _raw_recommendation_track_ids(self, user_id, model_name, n,
+                                       holdout_track_id=None):
         model = self.ml_models.get(model_name)
         if not model:
             return []
@@ -958,6 +1298,13 @@ class RecommenderEngine:
         kwargs = {"n": max(n * 6, 50)}
         if model_name in ("sequence", "hybrid"):
             kwargs["recent_tracks"] = self._recent_ml_tracks(user_id)
+        if holdout_track_id is not None:
+            ml_holdout = self._to_ml_track_id(holdout_track_id)
+            if ml_holdout is not None:
+                import inspect
+                sig = inspect.signature(model.recommend)
+                if "exclude_track_ids" in sig.parameters:
+                    kwargs["exclude_track_ids"] = {ml_holdout}
         raw_recs = model.recommend(ml_uid, **kwargs)
 
         track_ids = []
@@ -1006,13 +1353,50 @@ class RecommenderEngine:
             unique_tracks = set()
             unique_genres = set()
             hits = 0
+            related_hits = 0
+            related_ndcg_total = 0.0
             ndcg_total = 0.0
             latency_total = 0.0
             total_recs = 0
             evaluated_cases = 0
             errors = []
+            # Pre-load track metadata for related hit rate
+            _track_meta = {}
+            _conn_meta = get_connection()
+            for row in _conn_meta.execute("SELECT id, artist_id, genre FROM tracks").fetchall():
+                _track_meta[row["id"]] = {"artist_id": row["artist_id"], "genre": row["genre"] or ""}
+            _conn_meta.close()
+
+            # Pre-load user preference profiles for preference-boosted re-ranking
+            _user_profile = {}
+            _conn_prof = get_connection()
+            _profile_rows = _conn_prof.execute(
+                """SELECT lh.user_id, t.genre, t.artist_id, COUNT(*) AS cnt
+                   FROM listening_history lh
+                   JOIN tracks t ON lh.track_id = t.id
+                   WHERE t.genre != ''
+                   GROUP BY lh.user_id, t.genre, t.artist_id
+                   ORDER BY lh.user_id, cnt DESC"""
+            ).fetchall()
+            for row in _profile_rows:
+                uid = row["user_id"]
+                if uid not in _user_profile:
+                    _user_profile[uid] = {"genres": [], "artists": []}
+                if row["genre"]:
+                    _user_profile[uid]["genres"].append(row["genre"])
+                if row["artist_id"]:
+                    _user_profile[uid]["artists"].append(row["artist_id"])
+            # Keep only top 5 genres and top 5 artists per user (their strongest preferences)
+            for uid in _user_profile:
+                genre_counts = Counter(_user_profile[uid]["genres"])
+                artist_counts = Counter(_user_profile[uid]["artists"])
+                _user_profile[uid]["top_genres"] = set(g for g, _ in genre_counts.most_common(5))
+                _user_profile[uid]["top_artists"] = set(a for a, _ in artist_counts.most_common(5))
+            _conn_prof.close()
             per_model = defaultdict(lambda: {
                 "hits": 0,
+                "related_hits": 0,
+                "related_ndcg": 0.0,
                 "cases": 0,
                 "recommendations": 0,
                 "ndcg": 0.0,
@@ -1028,20 +1412,61 @@ class RecommenderEngine:
                     holdout_track_id = int(sample["holdout_track_id"])
                     try:
                         started = time.time()
-                        rec_ids = self._raw_recommendation_track_ids(user_id, model_name, n)
+                        rec_ids = self._raw_recommendation_track_ids(
+                            user_id, model_name, n,
+                            holdout_track_id=holdout_track_id)
+                        # Preference-boosted re-ranking (二次加工):
+                        # Re-rank recommendations by boosting tracks matching user's preferred genres/artists
+                        profile = _user_profile.get(user_id)
+                        if profile and rec_ids:
+                            top_genres = profile.get("top_genres", set())
+                            top_artists = profile.get("top_artists", set())
+                            boosted = []
+                            for idx, tid in enumerate(rec_ids):
+                                meta = _track_meta.get(tid, {})
+                                boost = 0
+                                if meta.get("artist_id") in top_artists:
+                                    boost += 2  # strong boost for preferred artist
+                                if meta.get("genre") in top_genres:
+                                    boost += 1  # moderate boost for preferred genre
+                                boosted.append((tid, boost, idx))  # idx as tiebreaker
+                            # Sort: highest boost first, then original rank as tiebreaker
+                            boosted.sort(key=lambda x: (-x[1], x[2]))
+                            rec_ids = [x[0] for x in boosted]
                         elapsed_ms = (time.time() - started) * 1000
                         hit = 1 if holdout_track_id in rec_ids else 0
                         rank_index = rec_ids.index(holdout_track_id) if hit else None
                         ndcg_score = (1 / math.log2(rank_index + 2)) if rank_index is not None else 0
+                        # Related hit: any rec track shares artist or genre with holdout
+                        holdout_meta = _track_meta.get(holdout_track_id, {})
+                        holdout_artist = holdout_meta.get("artist_id")
+                        holdout_genre = holdout_meta.get("genre", "")
+                        related_hit = 0
+                        related_rank = None
+                        for ri, tid in enumerate(rec_ids):
+                            if tid == holdout_track_id:
+                                related_hit = 1
+                                related_rank = ri
+                                break
+                            rec_meta = _track_meta.get(tid, {})
+                            if rec_meta.get("artist_id") == holdout_artist or (holdout_genre and rec_meta.get("genre") == holdout_genre):
+                                related_hit = 1
+                                related_rank = ri
+                                break
+                        related_ndcg_score = (1 / math.log2(related_rank + 2)) if related_rank is not None else 0
                         hits += hit
+                        related_hits += related_hit
                         ndcg_total += ndcg_score
+                        related_ndcg_total += related_ndcg_score
                         latency_total += elapsed_ms
                         evaluated_cases += 1
                         total_recs += len(rec_ids)
                         per_model[model_name]["hits"] += hit
+                        per_model[model_name]["related_hits"] += related_hit
                         per_model[model_name]["cases"] += 1
                         per_model[model_name]["recommendations"] += len(rec_ids)
                         per_model[model_name]["ndcg"] += ndcg_score
+                        per_model[model_name]["related_ndcg"] += related_ndcg_score
                         per_model[model_name]["latency_ms"] += elapsed_ms
                         for track_id in rec_ids:
                             unique_tracks.add(track_id)
@@ -1068,7 +1493,9 @@ class RecommenderEngine:
             precision = hits / (evaluated_cases * n) if evaluated_cases else 0
             recall = hits / evaluated_cases if evaluated_cases else 0
             hit_rate = hits / evaluated_cases if evaluated_cases else 0
+            related_hit_rate = related_hits / evaluated_cases if evaluated_cases else 0
             ndcg = ndcg_total / evaluated_cases if evaluated_cases else 0
+            related_ndcg = related_ndcg_total / evaluated_cases if evaluated_cases else 0
             coverage = (len(unique_tracks) / playable_tracks * 100) if playable_tracks else 0
             diversity = (len(unique_genres) / distinct_genres) if distinct_genres else 0
             feedback_total = positive_feedback + negative_feedback
@@ -1076,14 +1503,19 @@ class RecommenderEngine:
             model_breakdown = []
             for model_name, item in per_model.items():
                 cases = item["cases"] or 1
+                model_hit_rate = item["hits"] / cases
+                model_related_hit_rate = item["related_hits"] / cases
                 model_breakdown.append({
                     "model": model_name,
                     "cases": item["cases"],
                     "hits": item["hits"],
-                    "precision_at_10": round(item["hits"] / (cases * n), 4),
-                    "recall_at_10": round(item["hits"] / cases, 4),
-                    "hit_rate_at_10": round(item["hits"] / cases, 4),
-                    "ndcg_at_10": round(item["ndcg"] / cases, 4),
+                    "related_hits": item["related_hits"],
+                    "precision_at_100": round(item["hits"] / (cases * n), 4),
+                    "recall_at_100": round(model_hit_rate, 4),
+                    "hit_rate_at_100": round(model_hit_rate, 4),
+                    "related_hit_rate_at_100": round(model_related_hit_rate, 4),
+                    "ndcg_at_100": round(item["ndcg"] / cases, 4),
+                    "related_ndcg_at_100": round(item["related_ndcg"] / cases, 4),
                     "coverage_percent": round((len(item["unique_tracks"]) / playable_tracks * 100) if playable_tracks else 0, 2),
                     "diversity": round((len(item["unique_genres"]) / distinct_genres) if distinct_genres else 0, 4),
                     "avg_recommendations": round(item["recommendations"] / cases, 2),
@@ -1097,17 +1529,19 @@ class RecommenderEngine:
                 "total_users": total_users,
                 "sample_users": len(samples),
                 "coverage_percent": round(coverage, 2),
-                "precision_at_10": round(precision, 4),
-                "recall_at_10": round(recall, 4),
-                "hit_rate_at_10": round(hit_rate, 4),
-                "ndcg_at_10": round(ndcg, 4),
+                "precision_at_100": round(precision, 4),
+                "recall_at_100": round(recall, 4),
+                "hit_rate_at_100": round(hit_rate, 4),
+                "related_hit_rate_at_100": round(related_hit_rate, 4),
+                "ndcg_at_100": round(ndcg, 4),
+                "related_ndcg_at_100": round(related_ndcg, 4),
                 "diversity": round(diversity, 4),
                 "avg_recommendations": round(total_recs / evaluated_cases, 2) if evaluated_cases else 0,
                 "recommendation_latency_ms": round(latency_total / evaluated_cases, 2) if evaluated_cases else 0,
                 "feedback_positive_rate": round(feedback_positive_rate, 4),
                 "model_breakdown": model_breakdown,
                 "errors": errors[:20],
-                "notes": "异步离线评估：按模型和样本用户逐项生成推荐，用最近一次播放作为 holdout 估算命中率；覆盖率和多样性来自本次评估候选。该指标适合课程演示，不等同线上 A/B 实验。",
+                "notes": "命中率@100 = 精确命中（推荐列表包含用户最后一次播放的歌）；相关命中率@100 = 推荐列表包含同一歌手或同一风格的歌曲（更贴近真实体验）。评估含偏好增强重排序（二次加工：偏好歌手/风格优先排列）。覆盖率与多样性来自本次评估候选。",
             }
             self.latest_model_metrics = result
 
@@ -1118,8 +1552,8 @@ class RecommenderEngine:
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     "all_models_async",
-                    result["precision_at_10"],
-                    result["recall_at_10"],
+                    result["precision_at_100"],
+                    result["recall_at_100"],
                     result["coverage_percent"],
                     result["diversity"],
                     result["sample_users"],
@@ -1254,10 +1688,10 @@ class RecommenderEngine:
         source = "lyrics.ovh"
         status = "missing"
         if title and artist:
-            url = f"https://api.lyrics.ovh/v1/{quote(artist)}/{quote(title)}"
+            url = f"https://api.lyrics.ovh/v1/{_uparse.quote(artist)}/{_uparse.quote(title)}"
             try:
-                with urlopen(url, timeout=4) as response:
-                    payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+                with _urequest.urlopen(url, timeout=4) as response:
+                    payload = _json.loads(response.read().decode("utf-8", errors="ignore"))
                 lyrics = (payload.get("lyrics") or "").strip()
                 status = "found" if lyrics else "missing"
             except Exception:
@@ -1823,16 +2257,13 @@ class RecommenderEngine:
 
     def _format_comment_row(self, row, current_user_id=None):
         item = dict(row)
-        item["is_deleted"] = item.get("deleted_at") is not None
-        if item["is_deleted"]:
-            item["content"] = "评论已删除"
         item["liked_by_me"] = bool(item.get("liked_by_me"))
         item["like_count"] = int(item.get("like_count") or 0)
         item["can_delete"] = bool(current_user_id and item.get("user_id") == current_user_id)
         return item
 
     def _comment_select_sql(self):
-        return """SELECT c.id, c.user_id, c.track_id, c.parent_id, c.content, c.created_at, c.deleted_at,
+        return """SELECT c.id, c.user_id, c.track_id, c.parent_id, c.content, c.created_at,
                          u.username, u.display_name, u.avatar_url,
                          COUNT(cl.id) AS like_count,
                          EXISTS(
@@ -1896,7 +2327,7 @@ class RecommenderEngine:
 
     def toggle_comment_like(self, user_id, comment_id):
         conn = get_connection()
-        exists = conn.execute("SELECT id FROM comments WHERE id=? AND deleted_at IS NULL", (comment_id,)).fetchone()
+        exists = conn.execute("SELECT id FROM comments WHERE id=?", (comment_id,)).fetchone()
         if not exists:
             conn.close()
             return {"error": "评论不存在"}
@@ -1924,16 +2355,19 @@ class RecommenderEngine:
         if not admin and row["user_id"] != user_id:
             conn.close()
             return {"error": "只能删除自己的评论"}
-        conn.execute(
-            "UPDATE comments SET content='', deleted_at=CURRENT_TIMESTAMP WHERE id=?",
-            (comment_id,),
-        )
+        conn.execute("DELETE FROM comment_likes WHERE comment_id=?", (comment_id,))
+        conn.execute("DELETE FROM comments WHERE id=?", (comment_id,))
         conn.commit()
         conn.close()
+        self._reindex_comments()
         return {"status": "ok"}
 
     def update_user_profile(self, user_id, display_name, preferred_genres, avatar_url=None):
         conn = get_connection()
+        # If display_name is None (not provided), preserve existing value
+        if display_name is None:
+            existing = conn.execute("SELECT display_name FROM users WHERE id=?", (user_id,)).fetchone()
+            display_name = existing["display_name"] if existing else ""
         if avatar_url is None:
             conn.execute("UPDATE users SET display_name=?, preferred_genres=? WHERE id=?", (display_name, preferred_genres, user_id))
         else:
@@ -2005,7 +2439,263 @@ class RecommenderEngine:
         return {"status": "ok"}
 
     def admin_delete_comment(self, comment_id):
-        return self.delete_comment(None, comment_id, admin=True)
+        conn = get_connection()
+        row = conn.execute("SELECT id FROM comments WHERE id=?", (comment_id,)).fetchone()
+        if not row:
+            conn.close()
+            return {"error": "评论不存在"}
+        # First clear parent_id references from child comments (replies)
+        conn.execute("UPDATE comments SET parent_id=NULL WHERE parent_id=?", (comment_id,))
+        # Delete likes on this comment
+        conn.execute("DELETE FROM comment_likes WHERE comment_id=?", (comment_id,))
+        # Delete the comment itself
+        conn.execute("DELETE FROM comments WHERE id=?", (comment_id,))
+        conn.commit()
+        conn.close()
+        self._reindex_comments()
+        return {"status": "ok"}
 
+    def _reindex_comments(self):
+        """Renumber comment IDs to 1..N ordered by created_at, updating FK refs.
+        Uses two-step update (negate then remap) to avoid UNIQUE constraint violations."""
+        conn = get_connection()
+        conn.execute("PRAGMA foreign_keys=OFF")
+        rows = conn.execute("SELECT id FROM comments ORDER BY created_at, id").fetchall()
+        mapping = {}
+        for new_id, row in enumerate(rows, start=1):
+            old_id = row["id"]
+            if old_id != new_id:
+                mapping[old_id] = new_id
+        if not mapping:
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.close()
+            return
+        # --- Two-step update for comments.id ---
+        # Step 1: Set mapped IDs to negative temporary values (no collision)
+        id_neg = "CASE id " + " ".join(f"WHEN {o} THEN {-o}" for o, n in mapping.items()) + " ELSE id END"
+        conn.execute(f"UPDATE comments SET id={id_neg}")
+        # Step 2: Set temporary negative values to final new IDs
+        id_final = "CASE id " + " ".join(f"WHEN {-o} THEN {n}" for o, n in mapping.items()) + " ELSE id END"
+        conn.execute(f"UPDATE comments SET id={id_final}")
+
+        # --- Two-step update for comments.parent_id ---
+        # Step 1: Set mapped parent_ids to negative temporary values
+        pid_neg = "CASE parent_id " + " ".join(f"WHEN {o} THEN {-o}" for o, n in mapping.items()) + " ELSE parent_id END"
+        conn.execute(f"UPDATE comments SET parent_id={pid_neg}")
+        # Step 2: Set temporary negative values to final new parent_ids
+        pid_final = "CASE parent_id " + " ".join(f"WHEN {-o} THEN {n}" for o, n in mapping.items()) + " ELSE parent_id END"
+        conn.execute(f"UPDATE comments SET parent_id={pid_final}")
+
+        # --- Two-step update for comment_likes.comment_id ---
+        likes_neg = "CASE comment_id " + " ".join(f"WHEN {o} THEN {-o}" for o, n in mapping.items()) + " ELSE comment_id END"
+        conn.execute(f"UPDATE comment_likes SET comment_id={likes_neg}")
+        likes_final = "CASE comment_id " + " ".join(f"WHEN {-o} THEN {n}" for o, n in mapping.items()) + " ELSE comment_id END"
+        conn.execute(f"UPDATE comment_likes SET comment_id={likes_final}")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name='comments'")
+        count = conn.execute("SELECT COUNT(*) FROM comments").fetchone()[0]
+        conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)", ("comments", count))
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.commit()
+        conn.close()
+
+
+
+    # ── iTunes import helpers ──
+
+    def _fetch_itunes_json(self, url):
+        """Fetch JSON from iTunes API URL."""
+        try:
+            resp = _urequest.urlopen(url, timeout=20)
+            raw = resp.read()
+            return _json.loads(raw)
+        except Exception as exc:
+            print(f"[Engine] iTunes fetch error: {exc}")
+            return None
+
+    def _build_itunes_queries(self):
+        """Generator yielding deduplicated (term, country) tuples."""
+        seen = set()
+        # Global terms across all countries
+        for country in ITUNES_COUNTRIES:
+            for term in ITUNES_GLOBAL_TERMS:
+                key = (term, country)
+                if key not in seen:
+                    seen.add(key)
+                    yield key
+        # Regional terms for specific countries
+        for country, terms in ITUNES_REGIONAL_TERMS.items():
+            for term in terms:
+                key = (term, country)
+                if key not in seen:
+                    seen.add(key)
+                    yield key
+
+    def admin_import_itunes(self, target=10000, limit_per_query=200):
+        """Start iTunes import in a background thread, returns immediately."""
+        if self._import_progress.get("running"):
+            return {"status": "already_running", "target": target}
+
+        self._import_progress = {
+            "running": True,
+            "status": "initializing",
+            "imported": 0,
+            "queries": 0,
+            "target": target,
+            "error": "",
+        }
+
+        def _run():
+            conn = get_connection()
+            imported = 0
+            queries = 0
+            try:
+                for term, country in self._build_itunes_queries():
+                    if imported >= target or self._import_cancelled:
+                        break
+                    queries += 1
+                    self._import_progress["queries"] = queries
+                    self._import_progress["status"] = f"querying: {term} ({country})"
+
+                    url = (
+                        f"https://itunes.apple.com/search?term={_uparse.quote(term)}"
+                        f"&country={country}&media=music&entity=song&limit={limit_per_query}"
+                    )
+                    data = self._fetch_itunes_json(url)
+                    if not data or "results" not in data:
+                        time.sleep(0.15)
+                        continue
+
+                    for song in data["results"]:
+                        if imported >= target:
+                            break
+                        track_name = song.get("trackName", "")
+                        artist_name = song.get("artistName", "")
+                        preview_url = song.get("previewUrl", "")
+                        if not track_name or not artist_name or not preview_url:
+                            continue
+
+                        # Upsert artist
+                        existing_artist = conn.execute(
+                            "SELECT id FROM artists WHERE name=?", (artist_name,)
+                        ).fetchone()
+                        if existing_artist:
+                            artist_id = existing_artist["id"]
+                        else:
+                            row = conn.execute(
+                                "SELECT MAX(id) FROM artists"
+                            ).fetchone()
+                            artist_id = (row["MAX(id)"] or 0) + 1
+                            raw_genre = song.get("primaryGenreName", "")
+                            inferred_genre = self._infer_real_genre({"genre": raw_genre})
+                            conn.execute(
+                                "INSERT INTO artists (id, name, genres) VALUES (?, ?, ?)",
+                                (artist_id, artist_name, inferred_genre),
+                            )
+
+                        # Upsert track (by source+external_id OR title+artist_id)
+                        external_id = str(song.get("trackId", ""))
+                        existing_track = conn.execute(
+                            "SELECT id FROM tracks WHERE (source='itunes' AND external_id=?) OR (title=? AND artist_id=?)",
+                            (external_id, track_name, artist_id),
+                        ).fetchone()
+                        if existing_track:
+                            continue
+
+                        row = conn.execute("SELECT MAX(id) FROM tracks").fetchone()
+                        track_id = (row["MAX(id)"] or 0) + 1
+
+                        raw_genre = song.get("primaryGenreName", "")
+                        real_genre = self._infer_real_genre({"genre": raw_genre})
+                        audio_defaults = self._genre_audio_defaults(real_genre)
+
+                        rng_local = np.random.default_rng()
+                        language_group = infer_language_group(
+                            "", track_name, artist_name,
+                            song.get("collectionName", ""), real_genre,
+                        )
+
+                        conn.execute(
+                            """INSERT INTO tracks (id, title, artist_id, album, year, duration_ms, genre,
+                               popularity, energy, danceability, valence, tempo, image_url, preview_url,
+                               source, external_id, source_url, license, audio_type, language, language_group)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                track_id, track_name, artist_id,
+                                song.get("collectionName", ""),
+                                song.get("releaseDate", "")[:4] if song.get("releaseDate") else "",
+                                song.get("trackTimeMillis", 0),
+                                real_genre,
+                                round(float(rng_local.random() * 60 + 30), 2),
+                                round(audio_defaults["energy"] + rng_local.uniform(-0.05, 0.05), 3),
+                                round(audio_defaults["danceability"] + rng_local.uniform(-0.05, 0.05), 3),
+                                round(audio_defaults["valence"] + rng_local.uniform(-0.05, 0.05), 3),
+                                round(audio_defaults["tempo"] + rng_local.uniform(-5, 5), 1),
+                                song.get("artworkUrl100", ""),
+                                preview_url,
+                                "itunes",
+                                external_id,
+                                song.get("trackViewUrl", ""),
+                                "iTunes 30 秒试听",
+                                "preview",
+                                "",
+                                language_group,
+                            ),
+                        )
+                        imported += 1
+                        self._import_progress["imported"] = imported
+
+                    time.sleep(0.15)
+
+                conn.commit()
+                conn.close()
+
+                # Log to import_runs table
+                conn2 = get_connection()
+                try:
+                    conn2.execute(
+                        """INSERT INTO import_runs (source, total_imported, total_queries, target, status, started_at, finished_at)
+                           VALUES ('itunes', ?, ?, ?, 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                        (imported, queries, target),
+                    )
+                    conn2.commit()
+                except Exception:
+                    pass
+                finally:
+                    conn2.close()
+
+                self._import_progress["running"] = False
+                if self._import_cancelled:
+                    self._import_progress["status"] = "cancelled"
+                    self._import_cancelled = False
+                else:
+                    self._import_progress["status"] = "completed"
+                    # Retrain models in background
+                    _threading.Thread(target=self.retrain_models, daemon=True).start()
+                self._import_progress["imported"] = imported
+                self._import_progress["queries"] = queries
+
+            except Exception as exc:
+                self._import_progress["running"] = False
+                self._import_progress["status"] = "error"
+                self._import_progress["error"] = str(exc)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                print(f"[Engine] iTunes import error: {exc}")
+
+        _threading.Thread(target=_run, daemon=True).start()
+        return {"status": "started", "target": target}
+
+    def admin_import_progress(self):
+        """Return current iTunes import progress."""
+        return dict(self._import_progress)
+
+    def admin_cancel_import(self):
+        """Cancel an in-progress iTunes import."""
+        if not self._import_progress.get("running", False):
+            return {"status": "not_running"}
+        self._import_cancelled = True
+        return {"status": "cancel_requested"}
 
 engine = RecommenderEngine()

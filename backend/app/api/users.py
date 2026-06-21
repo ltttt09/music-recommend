@@ -145,8 +145,11 @@ def update_profile(user_id):
     if current_id != user_id:
         return jsonify({"detail": "不能修改其他用户资料"}), 403
     data = request.get_json(silent=True) or {}
-    display_name = data.get("display_name", "")
+    display_name = data.get("display_name")  # None if not provided — engine will preserve existing
     preferred_genres = data.get("preferred_genres", "")
+    # Handle genre format: frontend may send array or comma-separated string
+    if isinstance(preferred_genres, list):
+        preferred_genres = ",".join(preferred_genres)
     avatar_url = data.get("avatar_url") if "avatar_url" in data else None
     return jsonify(engine.update_user_profile(user_id, display_name, preferred_genres, avatar_url))
 

@@ -120,10 +120,15 @@ def admin_action_logs(page=1, size=100, action_type="", status="", search=""):
         params.append(status)
     if search:
         like = f"%{search}%"
-        where.append("(al.message LIKE ? OR al.page_url LIKE ? OR al.entity_type LIKE ? OR CAST(al.entity_id AS TEXT) LIKE ? OR al.metadata LIKE ?)")
-        params.extend([like, like, like, like, like])
+        where.append("(al.message LIKE ? OR al.page_url LIKE ? OR al.entity_type LIKE ? OR CAST(al.entity_id AS TEXT) LIKE ? OR al.metadata LIKE ? OR al.session_id LIKE ? OR u.username LIKE ? OR u.display_name LIKE ?)")
+        params.extend([like, like, like, like, like, like, like, like])
     where_sql = " AND ".join(where)
-    total = conn.execute(f"SELECT COUNT(*) FROM user_action_logs al WHERE {where_sql}", params).fetchone()[0]
+    total = conn.execute(
+        f"""SELECT COUNT(*) FROM user_action_logs al
+            LEFT JOIN users u ON al.user_id=u.id
+            WHERE {where_sql}""",
+        params,
+    ).fetchone()[0]
     rows = conn.execute(
         f"""SELECT al.*, u.username, u.display_name
             FROM user_action_logs al

@@ -23,7 +23,10 @@ export default {
   me() { return fetchJSON(`/auth/me`); },
 
   adminStats() { return fetchJSON(`/admin/stats`); },
-  adminUsers(page = 1) { return fetchJSON(`/admin/users?page=${page}`); },
+  adminUsers(page = 1, size = 20, search = "", genre = "", sortBy = "id", sortOrder = "asc") {
+    const p = new URLSearchParams({ page, size, search, genre, sort_by: sortBy, sort_order: sortOrder });
+    return fetchJSON(`/admin/users?${p}`);
+  },
   adminTracks(page = 1, size = 20, search = "", sortBy = "id", sortOrder = "asc") {
     const p = new URLSearchParams({ page, size, search, sort_by: sortBy, sort_order: sortOrder });
     return fetchJSON(`/admin/tracks?${p}`);
@@ -35,8 +38,10 @@ export default {
       body: JSON.stringify(data),
     });
   },
-  adminComments(page = 1, size = 20) {
-    return fetchJSON(`/admin/comments?page=${page}&size=${size}`);
+  adminComments(page = 1, size = 20, search = "") {
+    const p = new URLSearchParams({ page, size });
+    if (search) p.set("search", search);
+    return fetchJSON(`/admin/comments?${p}`);
   },
   adminFeedback() { return fetchJSON(`/admin/feedback`); },
   adminSystem() { return fetchJSON(`/admin/system`); },
@@ -52,9 +57,11 @@ export default {
   adminRecommendationLogs(page = 1, size = 50) {
     return fetchJSON(`/admin/recommendation-logs?page=${page}&size=${size}`);
   },
-  adminActionLogs(page = 1, size = 100, actionType = "") {
+  adminActionLogs(page = 1, size = 100, actionType = '', status = '', search = '') {
     const p = new URLSearchParams({ page, size });
     if (actionType) p.set("action_type", actionType);
+    if (status) p.set("status", status);
+    if (search) p.set("search", search);
     return fetchJSON(`/admin/action-logs?${p}`);
   },
   adminUserProfile(userId) {
@@ -62,6 +69,20 @@ export default {
   },
   adminDataSources() {
     return fetchJSON(`/admin/data-sources`);
+  },
+  adminReindexIds() {
+    return fetchJSON(`/admin/reindex-ids`, { method: "POST" });
+  },
+  adminImportItunes(target = 10000, limitPerQuery = 200) {
+    return fetchJSON(`/admin/import-itunes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, limit_per_query: limitPerQuery }),
+    });
+  },
+  adminImportProgress() { return fetchJSON(`/admin/import-progress`); },
+  adminImportCancel() {
+    return fetchJSON(`/admin/import-cancel`, { method: "POST" });
   },
 
   getTracks(page = 1, size = 20, search = "", genre = "", yearFrom = 0, yearTo = 0, language = "", sortBy = "popularity", sortOrder = "desc") {
@@ -85,6 +106,7 @@ export default {
   getUser(id) { return fetchJSON(`/users/${id}`); },
   getUserHistory(id, limit = 50) { return fetchJSON(`/users/${id}/history?limit=${limit}`); },
   getLikedTracks(id) { return fetchJSON(`/users/${id}/liked`); },
+  unlikeTrack(userId, trackId) { return fetchJSON(`/users/${userId}/liked/${trackId}`, { method: "DELETE" }); },
   getRecommendations(userId, model = "hybrid", n = 10, excludeIds = [], refresh = false) {
     const p = new URLSearchParams({ model, n });
     if (excludeIds.length) p.set("exclude_ids", excludeIds.join(","));

@@ -135,7 +135,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api.js'
-import { auth } from '../auth.js'
+import { auth, getUserId } from '../auth.js'
 import { pauseTrack, playerState, playTrack } from '../audio.js'
 import TrackList from '../components/TrackList.vue'
 import AddToPlaylistModal from '../components/AddToPlaylistModal.vue'
@@ -171,7 +171,7 @@ const lyricsMessage = ref('暂未找到这首歌的歌词')
 const lyricsLoading = ref(true)
 const playlistOpen = ref(false)
 
-function getUserId() { return auth.userId || Number(localStorage.getItem('user_id')) || 0 }
+// getUserId() imported from auth.js
 function showToast(message, type = 'success') {
   toast.value = message
   toastType.value = type
@@ -389,10 +389,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.back-btn { background: none; border: none; color: var(--color-text-muted); font-size: 14px; cursor: pointer; padding: 8px 0; margin: 24px 0 16px; display: block; }
+.back-btn { background: none; border: none; color: var(--color-text-muted); font-size: 14px; cursor: pointer; padding: 8px 0; margin: 24px 0 16px; display: block; animation: fadeUp .3s ease both; }
 .back-btn:hover { color: var(--color-text); }
-.track-hero { display: flex; align-items: flex-start; gap: 32px; margin-bottom: 40px; }
-.hero-cover { width: 240px; height: 240px; border-radius: 18px; flex-shrink: 0; position: relative; overflow: hidden; box-shadow: 0 12px 48px rgba(0,0,0,0.5); }
+.track-hero { display: flex; align-items: flex-start; gap: 32px; margin-bottom: 40px; animation: fadeUp .4s ease .06s both; }
+.hero-cover { width: 240px; height: 240px; border-radius: 18px; flex-shrink: 0; position: relative; overflow: hidden; box-shadow: 0 12px 48px rgba(0,0,0,0.5); transition: transform .3s ease; }
+.hero-cover:hover { transform: scale(1.02); }
 .hero-img { width: 100%; height: 100%; object-fit: cover; }
 .hero-fallback { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
 .hero-letter { font-size: 80px; font-weight: 900; font-family: Arial, "Microsoft YaHei", sans-serif; color: rgba(255,255,255,0.35); line-height: 1; }
@@ -406,7 +407,7 @@ onMounted(async () => {
 .toast { margin-top: 10px; font-size: 13px; }
 .toast.success { color: var(--color-like); }
 .toast.error { color: var(--color-dislike); }
-.section { margin-top: 32px; }
+.section { margin-top: 32px; animation: fadeUp .4s ease .18s both; }
 .section h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
 .btn-like.active { box-shadow: 0 0 0 2px rgba(0,184,148,.25); filter: brightness(1.08); }
 .btn-dislike.active { box-shadow: 0 0 0 2px rgba(225,112,85,.25); filter: brightness(1.08); }
@@ -433,6 +434,7 @@ onMounted(async () => {
 .empty-hint { text-align: center; color: var(--color-text-muted); padding: 24px 0; font-size: 13px; }
 .lyrics-box { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 16px; max-height: 360px; overflow: auto; white-space: pre-wrap; line-height: 1.8; font-size: 14px; color: var(--color-text); }
 .lyrics-box.muted { color: var(--color-text-muted); }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 768px) {
   .track-hero { flex-direction: column; align-items: center; text-align: center; }
   .hero-cover { width: 200px; height: 200px; }

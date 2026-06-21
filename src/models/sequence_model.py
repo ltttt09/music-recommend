@@ -62,7 +62,8 @@ class SequenceRecommender:
                 self.transition_matrix[context][next_track] += 1
 
     def recommend(
-        self, user_id: int, recent_tracks: list[int] | None = None, n: int = 10
+        self, user_id: int, recent_tracks: list[int] | None = None, n: int = 10,
+        exclude_track_ids: set[int] | None = None
     ) -> list[tuple[int, float]]:
         """根据最近 k 首歌推荐下一首。
 
@@ -70,8 +71,11 @@ class SequenceRecommender:
             user_id: 用户 ID
             recent_tracks: 最近听过的 k 首歌列表（最近的在最后）
             n: 推荐数量
+            exclude_track_ids: 评估时从"已听过"中排除的曲目（留一法holdout）
         """
         listened = self.user_history.get(user_id, set())
+        if exclude_track_ids:
+            listened = listened - exclude_track_ids
 
         if recent_tracks and len(recent_tracks) >= self.k:
             context = tuple(recent_tracks[-self.k:])
@@ -89,3 +93,14 @@ class SequenceRecommender:
         popular = self.track_popularity.most_common(n + len(listened))
         popular = [(t, c) for t, c in popular if t not in listened]
         return popular[:n]
+
+    def save(self, path):
+        """Save model to disk."""  
+        import joblib
+        joblib.dump(self, path)
+
+    @classmethod
+    def load(cls, path):
+        """Load model from disk."""  
+        import joblib
+        return joblib.load(path)

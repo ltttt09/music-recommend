@@ -61,6 +61,13 @@ const creating = ref(false)
 const newName = ref('')
 const msg = ref('')
 const msgOk = ref(false)
+let msgTimer = null
+function setMsg(text, ok = false) {
+  msg.value = text
+  msgOk.value = ok
+  if (msgTimer) clearTimeout(msgTimer)
+  if (text) msgTimer = setTimeout(() => { msg.value = ''; msgOk.value = false; msgTimer = null }, ok ? 2000 : 3000)
+}
 
 async function loadPlaylists() {
   if (!uid.value) return
@@ -69,8 +76,7 @@ async function loadPlaylists() {
     const data = await api.getUserCreatedPlaylists(uid.value, 1, 50)
     playlists.value = data.items || []
   } catch (e) {
-    msg.value = e.message || '歌单加载失败'
-    msgOk.value = false
+    setMsg(e.message || '歌单加载失败', false)
   } finally {
     loading.value = false
   }
@@ -79,26 +85,22 @@ async function loadPlaylists() {
 async function createPlaylist() {
   const name = newName.value.trim()
   if (!name) {
-    msg.value = '歌单名称不能为空'
-    msgOk.value = false
+    setMsg('歌单名称不能为空', false)
     return
   }
   if (name.length > 30) {
-    msg.value = '歌单名称不能超过 30 个字符'
-    msgOk.value = false
+    setMsg('歌单名称不能超过 30 个字符', false)
     return
   }
   creating.value = true
   try {
     const created = await api.createUserPlaylist(uid.value, name)
     newName.value = ''
-    msg.value = '歌单创建成功'
-    msgOk.value = true
+    setMsg('歌单创建成功', true)
     await loadPlaylists()
     if (created?.id) selected.value = Array.from(new Set([...selected.value, created.id]))
   } catch (e) {
-    msg.value = e.message || '歌单创建失败'
-    msgOk.value = false
+    setMsg(e.message || '歌单创建失败', false)
   } finally {
     creating.value = false
   }
@@ -119,13 +121,11 @@ async function submit() {
         }
       }
     }
-    msg.value = success ? '已加入歌单' : '歌曲已在选中歌单中'
-    msgOk.value = true
+    setMsg(success ? '已加入歌单' : '歌曲已在选中歌单中', true)
     emit('added')
     setTimeout(() => emit('close'), 700)
   } catch (e) {
-    msg.value = e.message || '加入歌单失败'
-    msgOk.value = false
+    setMsg(e.message || '加入歌单失败', false)
   } finally {
     submitting.value = false
   }
@@ -140,6 +140,6 @@ onMounted(loadPlaylists)
 .modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.modal-head h2{font-size:18px}.close-btn{background:none;border:none;color:var(--color-text-muted);font-size:24px;cursor:pointer}
 .create-row{display:flex;gap:8px;margin-bottom:10px}.create-row input{flex:1}
 .playlist-list{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto}.playlist-row{display:flex;align-items:center;gap:10px;background:var(--color-bg);border-radius:var(--radius);padding:10px 12px;cursor:pointer}.playlist-row span{flex:1}.playlist-row small{color:var(--color-text-muted)}
-.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.msg{font-size:13px;margin:6px 0}.msg.success{color:var(--color-like)}.msg.error{color:var(--color-dislike)}
+.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.msg{font-size:14px;margin:6px 0}.msg.success{color:var(--color-like)}.msg.error{color:var(--color-dislike);font-weight:bold}
 .empty{text-align:center;color:var(--color-text-muted);padding:20px 0}.guest-avatar{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 10px;background:var(--color-bg);font-size:24px;color:var(--color-primary-light)}
 </style>

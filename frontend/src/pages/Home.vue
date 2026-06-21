@@ -147,8 +147,9 @@ const generatedPlaylists = ref([])
 const profilePlaylists = ref([])
 const skipCount = ref(0)
 const loading = ref({ recs: true })
-const CACHE_TTL = 6 * 60 * 60 * 1000
-const CACHE_VERSION = 4
+const CACHE_VERSION = 4  // Cache schema version – used for initial fast display only; refresh is driven by timer + events
+const REC_REFRESH_INTERVAL = 2 * 60 * 60 * 1000  // Refresh recommendations every 2 hours for long-online users
+let recRefreshTimer = null
 
 const userId = computed(() => auth.userId || Number(localStorage.getItem('user_id')) || 0)
 const isLoggedIn = computed(() => Boolean(userId.value))
@@ -285,7 +286,8 @@ function readCache() {
   try {
     const cached = JSON.parse(raw)
     if (cached.version !== CACHE_VERSION) return false
-    if (Date.now() - Number(cached.created_at || 0) > CACHE_TTL) return false
+    // No TTL age check: cache is for initial fast display only.
+    // Refresh is driven by REC_REFRESH_INTERVAL timer + home-data-invalidated events.
     user.value = cached.user || null
     userStats.value = cached.userStats || null
     recommendations.value = cached.recommendations || []
@@ -319,15 +321,77 @@ function clearHomeCache() {
   sessionStorage.removeItem('home_recommend_playlists')
 }
 
-async function refreshHomeFromEvent(event) {
+// Smart local refresh: track played - just update recent list locally
+function onTrackPlayed(event) {
   const playedTrack = event?.detail?.track
   if (playedTrack?.id) {
     recent.value = uniqueTracks([playedTrack, ...recent.value], 8)
+    buildProfilePlaylists()
+    writeCache()
   }
-  clearHomeCache()
-  await loadHome()
+}
+
+// Smart local refresh: data invalidated - only refresh the affected section
+async function onDataInvalidated(event) {
+  const reason = event?.detail?.reason || ''
+  const uid = userId.value
+  if (!uid) return
+
+  if (reason === 'likes' || reason === 'favorites') {
+    try {
+      const favData = await api.getFavorites(uid)
+      if (favData?.items) favorites.value = pickLikedTracks(favData.items, 4)
+      buildProfilePlaylists()
+      writeCache()
+    } catch {}
+  } else if (reason === 'blacklist') {
+    try {
+      const blData = await api.getBlacklist(uid, 1, 1)
+      if (blData) skipCount.value = blData.total || 0
+      writeCache()
+    } catch {}
+  } else if (reason === 'history') {
+    try {
+      const histData = await api.getUserHistory(uid, 8)
+      if (histData?.items) recent.value = uniqueTracks(histData.items, 8)
+      buildProfilePlaylists()
+      writeCache()
+    } catch {}
+  } else if (reason === 'profile') {
+    try {
+      const profileData = await api.getUser(uid)
+      if (profileData?.user) user.value = profileData.user
+      if (profileData?.stats) userStats.value = profileData.stats
+      buildProfilePlaylists()
+      writeCache()
+    } catch {}
+  } else {
+    // Unknown reason - do a full reload
+    clearHomeCache()
+    await loadHome()
+  }
+}
+
+// Interval-based refresh: only refresh recommendations + playlists
+async function refreshRecommendations() {
+  const uid = userId.value
+  if (!uid) return
+  try {
+    const recData = await api.getRecommendations(uid, 'hybrid', 6)
+    if (recData?.items) recommendations.value = uniqueTracks(recData.items, 6)
+    const playlistData = await api.getGeneratedPlaylists(uid)
+    if (playlistData?.items) generatedPlaylists.value = playlistData.items
+    buildProfilePlaylists()
+    writeCache()
+  } catch {}
+}
+
+async function refreshHomeFromEvent(event) {
+  // Legacy handler - only used for unknown event types, does local update
+  const playedTrack = event?.detail?.track
   if (playedTrack?.id) {
     recent.value = uniqueTracks([playedTrack, ...recent.value], 8)
+    buildProfilePlaylists()
     writeCache()
   }
 }
@@ -373,13 +437,18 @@ async function loadHome() {
 
 onMounted(() => {
   loadHome()
-  window.addEventListener('home-data-invalidated', refreshHomeFromEvent)
-  window.addEventListener('track-played', refreshHomeFromEvent)
+  // Timer: refresh recommendations + playlists every 2 hours (never full page reload)
+  recRefreshTimer = setInterval(refreshRecommendations, REC_REFRESH_INTERVAL)
+  // Smart local refresh: track played only updates recent list
+  window.addEventListener('track-played', onTrackPlayed)
+  // Smart local refresh: data invalidated only refreshes affected section
+  window.addEventListener('home-data-invalidated', onDataInvalidated)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('home-data-invalidated', refreshHomeFromEvent)
-  window.removeEventListener('track-played', refreshHomeFromEvent)
+  if (recRefreshTimer) { clearInterval(recRefreshTimer); recRefreshTimer = null }
+  window.removeEventListener('track-played', onTrackPlayed)
+  window.removeEventListener('home-data-invalidated', onDataInvalidated)
 })
 </script>
 
@@ -427,13 +496,13 @@ onUnmounted(() => {
 .dh-pl-info { padding: 12px 14px; }
 .dh-pl-name { font-size: 14px; font-weight: 600; }
 .dh-pl-cnt { font-size: 12px; color: var(--color-text-muted); margin-top: 4px; }
-.dh-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.dh-like-card { cursor: pointer; color: inherit; text-decoration: none; }
-.dh-lcover { aspect-ratio: 1; border-radius: 14px; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+.dh-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.dh-like-card { cursor: pointer; color: inherit; text-decoration: none; min-width: 0; overflow: hidden; }
+.dh-lcover { aspect-ratio: 5/6; border-radius: 14px; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
 .dh-lcch { font-size: 32px; font-weight: 800; color: rgba(255,255,255,.35); }
 .dh-heart { position: absolute; top: 8px; right: 8px; font-size: 16px; color: var(--color-like); filter: drop-shadow(0 1px 3px rgba(0,0,0,.4)); }
-.dh-ltitle { font-size: 13px; font-weight: 600; margin-top: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dh-lartist { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dh-ltitle { font-size: 13px; font-weight: 600; margin-top: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dh-lartist { font-size: 12px; color: var(--color-text-muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dh-skip { background: var(--color-surface); border-radius: 14px; padding: 18px 20px; display: flex; align-items: center; gap: 14px; border: 1px solid var(--color-border); }
 .dh-skip-icon { font-size: 28px; flex-shrink: 0; }
 .dh-skip p { font-size: 14px; font-weight: 500; }
@@ -445,6 +514,18 @@ onUnmounted(() => {
 .dh-login-panel { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--color-surface); border: 1px dashed var(--color-border); border-radius: 14px; padding: 18px 20px; color: var(--color-text-muted); font-size: 13px; }
 .dh-login-panel a { color: var(--color-primary-light); font-weight: 700; text-decoration: none; white-space: nowrap; }
 .dh-login-panel a:hover { text-decoration: underline; }
+
+/* Entrance animations */
+.dh-hero { animation: fadeUp .4s ease both; }
+.dh-prefs { animation: fadeUp .4s ease .06s both; }
+.dh-sec:nth-child(1) { animation: fadeUp .4s ease .12s both; }
+.dh-sec:nth-child(2) { animation: fadeUp .4s ease .18s both; }
+.dh-sec:nth-child(3) { animation: fadeUp .4s ease .24s both; }
+.dh-sec:nth-child(4) { animation: fadeUp .4s ease .30s both; }
+.dh-sec:nth-child(5) { animation: fadeUp .4s ease .36s both; }
+.dh-footer { animation: fadeUp .4s ease .42s both; }
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse { 0% { opacity: .7; } 50% { opacity: 1; } 100% { opacity: .7; } }
 @media (max-width: 1024px) { .dh-grid-6 { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 768px) {

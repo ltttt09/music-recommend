@@ -75,11 +75,7 @@
         <TrackCard v-for="t in tracks" :key="t.id" :track="t" />
       </div>
       <div v-if="tracks.length===0&&!loading" class="empty-hint">没有匹配的歌曲，换个筛选条件试试</div>
-      <div class="pager">
-        <button class="btn btn-ghost btn-sm" :disabled="page <= 1 || loading" @click="goPage(page - 1)">上一页</button>
-        <span>{{ page }} / {{ totalPages }}</span>
-        <button class="btn btn-ghost btn-sm" :disabled="page >= totalPages || loading" @click="goPage(page + 1)">下一页</button>
-      </div>
+      <Pagination :current="page" :total="totalPages" :total-items="total" item-name="首歌曲" @page-change="goPage" />
     </section>
   </div>
 </template>
@@ -88,6 +84,7 @@
 import { computed, onMounted, ref } from 'vue'
 import api from '../api.js'
 import TrackCard from '../components/TrackCard.vue'
+import Pagination from '../components/Pagination.vue'
 
 const tracks = ref([])
 const genres = ref([])
@@ -156,14 +153,15 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.search-box{display:flex;align-items:center;max-width:560px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;padding:0 16px;margin-bottom:16px}
+.search-box{display:flex;align-items:center;max-width:560px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;padding:0 16px;margin-bottom:16px;animation:fadeUp .3s ease both}
 .search-box:focus-within{border-color:var(--color-primary);box-shadow:0 0 0 3px rgba(108,92,231,.15)}
 .search-icon{font-size:18px;opacity:.5}.search-box input{flex:1;border:none;background:transparent;padding:14px 10px;font-size:16px;outline:none}
 .sort-bar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}.sort-bar label{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--color-text-muted)}.sort-bar select{min-width:110px;padding:8px 12px;font-size:13px}
-.filter-bar{background:var(--color-surface);border-radius:14px;padding:16px;margin-bottom:24px;display:flex;flex-direction:column;gap:12px;border:1px solid var(--color-border)}
+.filter-bar{background:var(--color-surface);border-radius:14px;padding:16px;margin-bottom:24px;display:flex;flex-direction:column;gap:12px;border:1px solid var(--color-border);animation:fadeUp .3s ease .06s both}
 .filter-group{display:flex;align-items:flex-start;gap:10px}.filter-label{font-size:12px;font-weight:700;color:var(--color-text-muted);min-width:48px;padding-top:6px;flex-shrink:0}.filter-tags{display:flex;flex-wrap:wrap;gap:6px;flex:1}
 .ftag{padding:5px 12px;border-radius:20px;border:1px solid var(--color-border);background:var(--color-bg);font-size:12px;color:var(--color-text-muted);cursor:pointer;transition:all .15s;white-space:nowrap}.ftag small{opacity:.7;margin-left:3px}.ftag:hover{border-color:var(--color-primary);color:var(--color-text)}.ftag.active{background:var(--color-primary);border-color:var(--color-primary);color:#fff;font-weight:600}.ftag-select{appearance:auto}
 .section{margin-bottom:40px}.section h2{font-size:18px;font-weight:600;margin-bottom:16px}.track-grid,.skeleton-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:16px}
 .empty-hint{text-align:center;color:var(--color-text-muted);padding:40px 0;font-size:14px}.pager{display:flex;align-items:center;justify-content:center;gap:12px;margin:24px 0;color:var(--color-text-muted);font-size:13px}
 @media(max-width:768px){.filter-bar{padding:12px}.filter-group{flex-direction:column;gap:6px}.track-grid,.skeleton-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 </style>

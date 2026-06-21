@@ -65,7 +65,11 @@ def stats():
 def list_users():
     page = _int_arg("page", 1, min_val=1)
     size = _int_arg("size", 20, min_val=1, max_val=100)
-    return jsonify(engine.admin_users(page, size))
+    search = request.args.get("search", "").strip()
+    genre = request.args.get("genre", "").strip()
+    sort_by = request.args.get("sort_by", "id").strip()
+    sort_order = request.args.get("sort_order", "asc").strip()
+    return jsonify(engine.admin_users(page, size, search=search, genre=genre, sort_by=sort_by, sort_order=sort_order))
 
 
 @bp.route("/users/delete", methods=["POST"])
@@ -128,8 +132,10 @@ def system_info():
 def retrain():
     data = request.get_json(silent=True) or {}
     force = data.get("force", False)
+    scope = data.get("scope", "all")
+    model_names = None if scope == "all" else [scope] if scope else None
     try:
-        engine.retrain_models(force_reseed=force)
+        engine.retrain_models(force_reseed=force, model_names=model_names)
         return jsonify({"status": "ok", "message": "模型重新训练完成"})
     except Exception as e:
         return jsonify({"detail": str(e)}), 500
@@ -147,16 +153,36 @@ def feedback_stats():
     return jsonify(engine.admin_feedback_stats())
 
 
+@bp.route("/import-itunes", methods=["POST"])
+@require_admin
+def import_itunes():
+    data = request.get_json(silent=True) or {}
+    target = data.get("target", 10000)
+    limit_per_query = data.get("limit_per_query", 200)
+    return jsonify(engine.admin_import_itunes(target, limit_per_query))
+
+
+@bp.route("/import-progress", methods=["GET"])
+@require_admin
+def import_progress():
+    return jsonify(engine.admin_import_progress())
+
+
+@bp.route("/import-cancel", methods=["POST"])
+@require_admin
+def import_cancel():
+    return jsonify(engine.admin_cancel_import())
+
+
 @bp.route("/seed-engagement", methods=["POST"])
 @require_admin
 def seed_engagement():
     data = request.get_json(silent=True) or {}
-    try:
-        likes_per_user = int(data.get("likes_per_user") or 8)
-        comments_per_user = int(data.get("comments_per_user") or 2)
-    except (TypeError, ValueError):
-        return jsonify({"detail": "likes_per_user 和 comments_per_user 必须是数字"}), 400
-    return jsonify(engine.admin_seed_engagement(likes_per_user, comments_per_user))
+    likes_per_user = data.get("likes_per_user", 8)
+    comments_per_user = data.get("comments_per_user", 2)
+    comment_likes_per_user = data.get("comment_likes_per_user", 3)
+    playlists_per_user = data.get("playlists_per_user", 1)
+    return jsonify(engine.admin_seed_engagement(likes_per_user, comments_per_user, comment_likes_per_user, playlists_per_user))
 
 
 @bp.route("/comments", methods=["GET"])
@@ -164,7 +190,8 @@ def seed_engagement():
 def comments():
     page = _int_arg("page", 1, min_val=1)
     size = _int_arg("size", 20, min_val=1, max_val=100)
-    return jsonify(engine.admin_comments(page, size))
+    search = request.args.get("search", "").strip()
+    return jsonify(engine.admin_comments(page, size, search))
 
 
 @bp.route("/comments/<int:comment_id>", methods=["DELETE"])

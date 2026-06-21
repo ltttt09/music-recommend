@@ -27,12 +27,11 @@ LANGUAGE_GROUPS = {
 LANGUAGE_GENRE_PREFIXES = {
     "ZH": {"CN", "TW", "HK", "华语", "国语", "粤语", "中文"},
     "CN": {"CN", "TW", "HK", "华语", "国语", "粤语", "中文"},
-    "EN": {"US", "GB", "AU", "CA", "欧美", "英文", "国际"},
-    "US": {"US", "GB", "AU", "CA", "欧美", "英文", "国际"},
-    "JP": {"JP", "日语", "日本"},
-    "JA": {"JP", "日语", "日本"},
-    "KR": {"KR", "韩语", "韩国"},
-    "KO": {"KR", "韩语", "韩国"},
+    "EN": {"欧美", "英文", "国际"},
+    "JP": {"J-Pop", "日语", "日本"},
+    "JA": {"J-Pop", "日语", "日本"},
+    "KR": {"K-Pop", "韩语", "韩国"},
+    "KO": {"K-Pop", "韩语", "韩国"},
 }
 
 
@@ -309,6 +308,20 @@ class ListeningRepo:
     def get_stats(user_id: int):
         conn = get_connection()
         total = conn.execute("SELECT COUNT(*) FROM listening_history WHERE user_id = ?", (user_id,)).fetchone()[0]
+        unique_tracks = conn.execute(
+            "SELECT COUNT(DISTINCT track_id) FROM listening_history WHERE user_id = ?", (user_id,)
+        ).fetchone()[0]
+        liked_count = conn.execute(
+            """SELECT COUNT(DISTINCT track_id) FROM (
+               SELECT track_id FROM feedback WHERE user_id = ? AND rating > 0
+               UNION
+               SELECT track_id FROM favorites WHERE user_id = ?
+               )""",
+            (user_id, user_id),
+        ).fetchone()[0]
+        playlist_count = conn.execute(
+            "SELECT COUNT(*) FROM user_playlists WHERE user_id = ?", (user_id,)
+        ).fetchone()[0]
         top_genre_row = conn.execute(
             """SELECT t.genre, COUNT(*) AS cnt FROM listening_history lh
                JOIN tracks t ON lh.track_id = t.id
@@ -324,6 +337,9 @@ class ListeningRepo:
         conn.close()
         return {
             "total_listens": total,
+            "unique_tracks": unique_tracks,
+            "liked_count": liked_count,
+            "playlist_count": playlist_count,
             "top_genre": top_genre_row["genre"] if top_genre_row else "",
             "top_artist": top_artist_row["name"] if top_artist_row else "",
         }

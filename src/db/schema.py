@@ -26,27 +26,119 @@ def _has_char_range(text: str, start: int, end: int) -> bool:
 def infer_language_group(language: str = "", title: str = "", artist: str = "", album: str = "", genre: str = "") -> str:
     """Infer a coarse language group from track metadata.
 
-    iTunes country/storefront codes are not actual song languages. This helper
-    stores a normalized field used by filters so the UI does not treat TW/HK
-    storefront songs as Chinese unless the song metadata itself supports it.
+    Uses a multi-layer strategy: genre keywords → Unicode character detection →
+    Latin character fallback → country storefront code.
+
+    IMPORTANT distinction: genre keywords must be LANGUAGE indicators (describing
+    what language the song is sung in), NOT style descriptions. For example:
+    - "华语" (Chinese-language music) = language indicator → ZH ✓
+    - "民谣" (folk music) = style description → does NOT mean Chinese ✗
+    - "K-Pop" (Korean pop) = language indicator → KR ✓
+    iTunes genres are localized per storefront, so "民谣摇滚" is just the Chinese
+    translation of "Folk Rock" and does not indicate the song is sung in Chinese.
     """
     code = (language or "").strip().upper()
-    text = f"{title or ''} {album or ''}"
-    genre_text = genre or ""
+    # Use title + artist for character detection, NOT album.
+    # Album names are market-localized translations (e.g. "加州旅馆" for "Hotel California")
+    # that don't reflect the song's actual language. Title + artist are more reliable.
+    text = f"{title or ''} {artist or ''}"
+    genre_text = (genre or "").strip().lower()
     has_cjk = _has_char_range(text, 0x4E00, 0x9FFF)
     has_kana = _has_char_range(text, 0x3040, 0x30FF)
     has_hangul = _has_char_range(text, 0xAC00, 0xD7AF)
+    has_cyrillic = _has_char_range(text, 0x0400, 0x04FF)
+    has_devanagari = _has_char_range(text, 0x0900, 0x097F)
+    has_thai = _has_char_range(text, 0x0E00, 0x0E7F)
+    has_arabic_script = _has_char_range(text, 0x0600, 0x06FF)
 
-    if has_hangul or code in {"KR", "KO"}:
+    # Layer 1: genre keyword mapping (highest priority, overrides everything)
+    # ONLY language-indicator keywords — NOT music style descriptions
+    _genre_map = [
+        # Korean (language-specific pop genres)
+        (["k-pop", "korean pop", "k hip hop", "k-rap", "k drama ost"], "KR"),
+        # Japanese (language-specific pop genres)
+        (["j-pop", "j-pop", "j rock", "j-rock", "anime", "vocaloid", "city pop",
+          "日本", "anime song", "japanese", "game music", "jpop", "jrock"], "JP"),
+        # Chinese (ONLY language-specific: 华语=Chinese-language, not 民谣=folk style)
+        (["华语", "華語", "国语", "國語", "粤语", "粵語", "mandopop", "cantopop",
+          "chinese pop", "中文歌", "古风", "国语流行", "粤语流行", "中文嘻哈",
+          "中文摇滚", "华语流行", "华语音乐", "華語流行", "國語流行", "粵語流行"], "ZH"),
+        # French
+        (["chanson", "french pop", "french rap", "français"], "FR"),
+        # Spanish (including Mexican music which is sung in Spanish, NOT Portuguese)
+        (["flamenco", "spanish pop", "reggaeton", "latin pop", "ranchera",
+          "música mexicana", "regional mexicano", "música popular mexicana",
+          "corrido", "norteño", "banda", "latin urban", "latin trap"], "ES"),
+        # Portuguese / Brazilian (ONLY truly Portuguese-language genres)
+        (["bossa nova", "samba", "mpb", "funk carioca", "sertanejo",
+          "forró", "música popular brasileira", "axé", "pagode"], "PT"),
+        # German
+        (["schlager", "german pop", "german rap", "deutsch"], "DE"),
+        # Arabic
+        (["arabic pop", "khaleeji", "oud"], "AR"),
+        # Hindi / Indian
+        (["bollywood", "hindi", "punjabi", "tamil songs", "carnatic",
+          "filmi", "indian pop"], "IN"),
+        # Thai
+        (["thai pop", "luk thung", "molam", "string"], "TH"),
+        # Russian
+        (["russian pop", "russian rap", "shanson", "русская"], "RU"),
+    ]
+    for keywords, group in _genre_map:
+        if any(kw in genre_text for kw in keywords):
+            return group
+
+    # Layer 2: Unicode character detection
+    if has_hangul:
         return "KR"
-    if has_kana or code in {"JP", "JA"}:
+    if has_kana:
         return "JP"
-    if has_cjk or any(token in genre_text for token in ("华语", "華語", "国语", "國語", "粤语", "粵語")):
+    if has_cjk:
         return "ZH"
-    if code in {"US", "GB", "CA", "AU", "NZ", "IE"} or any("A" <= ch.upper() <= "Z" for ch in text):
+    if has_cyrillic:
+        return "RU"
+    if has_devanagari:
+        return "IN"
+    if has_thai:
+        return "TH"
+    if has_arabic_script:
+        return "AR"
+
+    # Layer 3: Latin character fallback (before country code)
+    # Songs with English titles from CN/TW/HK storefronts should be EN, not ZH.
+    # The storefront country is not the song's language.
+    has_latin = any("A" <= ch.upper() <= "Z" for ch in text)
+    if has_latin:
         return "EN"
-    if code in {"FR", "ES", "RU", "BR", "PT", "DE", "AR", "SA", "IN"}:
-        return {"BR": "PT", "SA": "AR"}.get(code, code)
+
+    # Layer 4: country storefront code (only when no character evidence)
+    # These are storefront codes, not song language. Only used as fallback
+    # when the title has no discernible characters (e.g. numeric/punctuation only).
+    if code in {"US", "GB", "CA", "AU", "NZ", "IE"}:
+        return "EN"
+    if code in {"CN", "TW", "HK", "SG"}:
+        return "ZH"
+    if code in {"KR", "KO"}:
+        return "KR"
+    if code in {"JP", "JA"}:
+        return "JP"
+    if code in {"FR"}:
+        return "FR"
+    if code in {"ES"}:
+        return "ES"
+    if code in {"RU"}:
+        return "RU"
+    if code in {"BR", "PT"}:
+        return "PT"
+    if code in {"DE"}:
+        return "DE"
+    if code in {"AR", "SA"}:
+        return "AR"
+    if code in {"IN"}:
+        return "IN"
+    if code in {"TH"}:
+        return "TH"
+
     return ""
 
 SCHEMA_SQL = """
@@ -260,6 +352,8 @@ CREATE TABLE IF NOT EXISTS model_metrics (
     model_name TEXT NOT NULL,
     precision_at_10 REAL DEFAULT 0.0,
     recall_at_10 REAL DEFAULT 0.0,
+    hit_rate_at_10 REAL DEFAULT 0,
+    ndcg_at_10 REAL DEFAULT 0,
     coverage REAL DEFAULT 0.0,
     diversity REAL DEFAULT 0.0,
     sample_users INTEGER DEFAULT 0,
@@ -331,6 +425,11 @@ COMMENT_MIGRATIONS = {
     "deleted_at": "TIMESTAMP",
 }
 
+MODEL_METRICS_MIGRATIONS = {
+    "hit_rate_at_10": "REAL DEFAULT 0",
+    "ndcg_at_10": "REAL DEFAULT 0",
+}
+
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str):
     cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -338,14 +437,82 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
+def _fix_stale_fk_refs(conn: sqlite3.Connection):
+    """Fix stale FK references in all tables (e.g. REFERENCES _tracks_old after rename)."""
+    stale_refs = ["_tracks_old", "_artists_old", '"_tracks_old"', '"_artists_old"']
+    replacements = [
+        ('REFERENCES "_tracks_old"', 'REFERENCES tracks'),
+        ('REFERENCES "_artists_old"', 'REFERENCES artists'),
+        ('REFERENCES _tracks_old', 'REFERENCES tracks'),
+        ('REFERENCES _artists_old', 'REFERENCES artists'),
+    ]
+    tables = conn.execute("SELECT name, sql FROM sqlite_master WHERE type='table'").fetchall()
+    affected = []
+    for t in tables:
+        name, sql = t["name"], (t["sql"] or "")
+        if any(stale in sql for stale in stale_refs):
+            affected.append((name, sql))
+
+    if not affected:
+        return  # nothing to fix
+
+    conn.execute("PRAGMA foreign_keys=OFF")
+    for table_name, current_sql in affected:
+        # Fix FK references by string replacement on the current schema SQL
+        fixed_sql = current_sql
+        for old_ref, new_ref in replacements:
+            fixed_sql = fixed_sql.replace(old_ref, new_ref)
+        if fixed_sql == current_sql:
+            continue
+        fixed_sql = fixed_sql.replace("IF NOT EXISTS ", "")
+        cols = [row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()]
+        col_list = ", ".join(cols)
+        conn.execute(f"ALTER TABLE {table_name} RENAME TO _stale_{table_name}_tmp")
+        conn.execute(fixed_sql)
+        conn.execute(f"INSERT INTO {table_name} ({col_list}) SELECT {col_list} FROM _stale_{table_name}_tmp")
+        conn.execute(f"DROP TABLE _stale_{table_name}_tmp")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.commit()
+
+
 def run_migrations(conn: sqlite3.Connection):
     """Apply lightweight schema migrations for existing SQLite databases."""
+    # Fix any stale FK references first (from previous migrations that used ALTER TABLE RENAME)
+    _fix_stale_fk_refs(conn)
+
+    # Fix artists table missing PRIMARY KEY (causes FK mismatch on tracks)
+    # Use CREATE new → DROP old → RENAME strategy to avoid stale FK refs
+    pk_info = conn.execute("PRAGMA table_info(artists)").fetchall()
+    has_pk = any(row["pk"] for row in pk_info)
+    if not has_pk:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        old_artists_cols = [row["name"] for row in pk_info]
+        col_list = ", ".join(old_artists_cols)
+        # Create new artists table with proper PK under temporary name
+        conn.execute("""CREATE TABLE _artists_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            genres TEXT DEFAULT '',
+            country TEXT DEFAULT '',
+            bio TEXT DEFAULT '',
+            image_url TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        conn.execute(f"INSERT INTO _artists_new ({col_list}) SELECT {col_list} FROM artists")
+        conn.execute("DROP TABLE artists")
+        conn.execute("ALTER TABLE _artists_new RENAME TO artists")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.commit()
+        # Re-fix stale FK refs that may have been introduced by the rename
+        _fix_stale_fk_refs(conn)
     for column, definition in TRACK_MIGRATIONS.items():
         _ensure_column(conn, "tracks", column, definition)
     for column, definition in FEEDBACK_MIGRATIONS.items():
         _ensure_column(conn, "feedback", column, definition)
     for column, definition in COMMENT_MIGRATIONS.items():
         _ensure_column(conn, "comments", column, definition)
+    for column, definition in MODEL_METRICS_MIGRATIONS.items():
+        _ensure_column(conn, "model_metrics", column, definition)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_source ON tracks(source, external_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_language ON tracks(language)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_language_group ON tracks(language_group)")
@@ -399,3 +566,121 @@ def init_db():
     conn.commit()
     conn.close()
     print(f"[DB] Initialized at {DB_PATH}")
+
+
+def reindex_all_ids():
+    """Reindex all primary key IDs to be sequential starting from 1.
+
+    This reassigns IDs in artists, tracks, users, comments, playlists,
+    user_playlists and all their foreign-key references so that every
+    table's IDs are 1, 2, 3, … without gaps.
+    """
+    conn = get_connection()
+    conn.execute("PRAGMA foreign_keys=OFF")
+
+    def _rebuild_table(table, id_col, order_col=None):
+        """Return a dict mapping old_id -> new_id for *table*."""
+        order = order_col or id_col
+        rows = conn.execute(f"SELECT {id_col} FROM {table} ORDER BY {order}").fetchall()
+        mapping = {}
+        for new_id, row in enumerate(rows, start=1):
+            old_id = row[id_col]
+            if old_id != new_id:
+                mapping[old_id] = new_id
+        if not mapping:
+            return {}
+        # Create temp table with new IDs
+        all_cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        col_list = ", ".join(all_cols)
+        tmp = f"_tmp_reindex_{table}"
+        conn.execute(f"DROP TABLE IF EXISTS {tmp}")
+        conn.execute(f"CREATE TABLE {tmp} ({col_list})")
+        # Build CASE expression for ID substitution
+        id_case = f"CASE {id_col} " + " ".join(f"WHEN {old} THEN {new}" for old, new in mapping.items()) + f" ELSE {id_col} END"
+        # Substitute ID column in SELECT
+        select_cols = []
+        for col in all_cols:
+            if col == id_col:
+                select_cols.append(id_case)
+            else:
+                select_cols.append(col)
+        select_expr = ", ".join(select_cols)
+        conn.execute(f"INSERT INTO {tmp} SELECT {select_expr} FROM {table}")
+        conn.execute(f"DROP TABLE {table}")
+        conn.execute(f"ALTER TABLE {tmp} RENAME TO {table}")
+        return mapping
+
+    def _update_fk(table, fk_col, mapping):
+        """Update foreign key column using old->new mapping."""
+        if not mapping:
+            return
+        case = f"CASE {fk_col} " + " ".join(f"WHEN {old} THEN {new}" for old, new in mapping.items()) + f" ELSE {fk_col} END"
+        conn.execute(f"UPDATE {table} SET {fk_col}={case}")
+
+    # Step 1: Reindex artists (affects tracks.artist_id)
+    artist_map = _rebuild_table("artists", "id", "name")
+    _update_fk("tracks", "artist_id", artist_map)
+
+    # Step 2: Reindex tracks (affects many FK references)
+    track_map = _rebuild_table("tracks", "id", "id")
+    for fk_table, fk_col in [
+        ("listening_history", "track_id"),
+        ("feedback", "track_id"),
+        ("favorites", "track_id"),
+        ("comments", "track_id"),
+        ("playlist_tracks", "track_id"),
+        ("user_playlist_tracks", "track_id"),
+        ("recommendation_logs", "track_id"),
+        ("lyrics_cache", "track_id"),
+        ("track_profile_cache", "track_id"),
+    ]:
+        _update_fk(fk_table, fk_col, track_map)
+    # Update entity_id in user_action_logs where entity_type='track'
+    if track_map:
+        case = "CASE entity_id " + " ".join(f"WHEN {old} THEN {new}" for old, new in track_map.items()) + " ELSE entity_id END"
+        conn.execute(f"UPDATE user_action_logs SET entity_id={case} WHERE entity_type='track'")
+
+    # Step 3: Reindex users (affects many FK references)
+    user_map = _rebuild_table("users", "id", "id")
+    for fk_table, fk_col in [
+        ("listening_history", "user_id"),
+        ("feedback", "user_id"),
+        ("favorites", "user_id"),
+        ("comments", "user_id"),
+        ("comment_likes", "user_id"),
+        ("playlists", "user_id"),
+        ("user_playlists", "user_id"),
+        ("recommendation_logs", "user_id"),
+        ("user_action_logs", "user_id"),
+        ("user_profile_cache", "user_id"),
+    ]:
+        _update_fk(fk_table, fk_col, user_map)
+
+    # Step 4: Reindex comments (affects comment_likes.comment_id, comments.parent_id)
+    comment_map = _rebuild_table("comments", "id", "created_at")
+    _update_fk("comments", "parent_id", comment_map)
+    _update_fk("comment_likes", "comment_id", comment_map)
+
+    # Step 5: Reindex playlists
+    playlist_map = _rebuild_table("playlists", "id", "id")
+    _update_fk("playlist_tracks", "playlist_id", playlist_map)
+    _update_fk("tracks", "seed_track_id", playlist_map) if "seed_track_id" in [r["name"] for r in conn.execute("PRAGMA table_info(playlists)").fetchall()] else None
+
+    # Step 6: Reindex user_playlists
+    user_playlist_map = _rebuild_table("user_playlists", "id", "id")
+    _update_fk("user_playlist_tracks", "playlist_id", user_playlist_map)
+
+    # Step 7: Reindex other auto-increment tables (listening_history, feedback, favorites, etc.)
+    for table in ["listening_history", "feedback", "favorites", "playlist_tracks",
+                   "user_playlist_tracks", "recommendation_logs", "user_action_logs",
+                   "comment_likes", "model_metrics", "import_runs"]:
+        try:
+            _rebuild_table(table, "id", "id")
+        except Exception:
+            pass  # Some tables may not have 'id' column
+
+    # Re-enable foreign keys and recreate indexes
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.commit()
+    conn.close()
+    print("[DB] Reindexed all IDs to sequential 1,2,3,…")

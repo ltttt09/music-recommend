@@ -171,46 +171,6 @@ class EnhancedRecommender:
     def get_trending(self, limit: int = 20):
         return TrackRepo.get_trending(limit)
 
-    # ---- Cold Start ----
-
-    def cold_start_seeds(self, n: int = 20):
-        genres = TrackRepo.get_genres()
-        tpg = max(1, n // max(1, len(genres)))
-        conn = get_connection()
-        results, seen = [], set()
-        for genre in genres:
-            rows = conn.execute("SELECT t.*, a.name AS artist_name FROM tracks t JOIN artists a ON t.artist_id=a.id WHERE t.genre=? ORDER BY t.popularity DESC LIMIT ?", (genre, tpg)).fetchall()
-            for row in rows:
-                if row["id"] not in seen: results.append(dict(row)); seen.add(row["id"])
-        conn.close()
-        return {"items": results[:n]}
-
-    def cold_start_recommend(self, liked_track_ids: list[int], n: int = 10):
-        if not liked_track_ids: return self._format_list(self.get_trending(n))
-        seed_genres = Counter()
-        for tid in liked_track_ids:
-            track = TrackRepo.get_by_id(tid)
-            if track: seed_genres[track.get("genre","")] += 1
-        top_genre = seed_genres.most_common(1)[0][0] if seed_genres else ""
-        conn = get_connection()
-        items = []
-        if top_genre:
-            placeholders = ",".join("?" * len(liked_track_ids))
-            rows = conn.execute(f"SELECT t.*, a.name AS artist_name FROM tracks t JOIN artists a ON t.artist_id=a.id WHERE t.genre=? AND t.id NOT IN ({placeholders}) ORDER BY t.popularity DESC LIMIT ?", [top_genre] + list(int(t) for t in liked_track_ids) + [n*3]).fetchall()
-            items = [dict(r) for r in rows]
-        if len(items) < n:
-            s2v = self.ml.get("song2vec")
-            if s2v:
-                for tid in liked_track_ids[:3]:
-                    try:
-                        for stid, _ in s2v.similar_tracks(tid, n=n):
-                            if stid not in liked_track_ids and stid not in {i["id"] for i in items}:
-                                track = TrackRepo.get_by_id(stid)
-                                if track: items.append(track)
-                    except Exception: pass
-        conn.close()
-        return {"items": items[:n]}
-
     # ---- Helpers ----
 
     def _format_track(self, track_id: int, score: float):
