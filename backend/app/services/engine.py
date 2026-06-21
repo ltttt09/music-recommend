@@ -33,11 +33,11 @@ from src.models.enhanced import EnhancedRecommender
 
 HYBRID_WEIGHT_KEYS = ["itemcf", "usercf", "svd", "song2vec", "sequence"]
 DEFAULT_HYBRID_WEIGHTS = {
-    "itemcf": 25,
-    "usercf": 15,
+    "itemcf": 35,
+    "usercf": 20,
     "svd": 25,
-    "song2vec": 15,
-    "sequence": 20,
+    "song2vec": 10,
+    "sequence": 10,
 }
 HYBRID_WEIGHT_CONFIG_KEY = "hybrid_weights"
 
@@ -575,7 +575,6 @@ class RecommenderEngine:
         conn.execute("DELETE FROM playlist_tracks WHERE playlist_id IN (SELECT id FROM playlists WHERE user_id = ?)", (user_id,))
         conn.execute("DELETE FROM playlists WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM user_playlist_tracks WHERE playlist_id IN (SELECT id FROM user_playlists WHERE user_id = ?)", (user_id,))
-        conn.execute("DELETE FROM user_playlist_tracks WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM user_playlists WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
@@ -1416,7 +1415,11 @@ class RecommenderEngine:
                             user_id, model_name, n,
                             holdout_track_id=holdout_track_id)
                         # Preference-boosted re-ranking (二次加工):
-                        # Re-rank recommendations by boosting tracks matching user's preferred genres/artists
+                        # Re-rank by blending original rank with preference boost.
+                        # Formula: score = boost * 20 - idx
+                        # - boost * 20 gives preference-matched tracks a dominant lead
+                        #   (max boost=5 → score=100, exceeding all idx values 0-99)
+                        # - -idx preserves relative ordering within each group
                         profile = _user_profile.get(user_id)
                         if profile and rec_ids:
                             top_genres = profile.get("top_genres", set())
@@ -1426,12 +1429,12 @@ class RecommenderEngine:
                                 meta = _track_meta.get(tid, {})
                                 boost = 0
                                 if meta.get("artist_id") in top_artists:
-                                    boost += 2  # strong boost for preferred artist
+                                    boost += 3  # strong boost for preferred artist
                                 if meta.get("genre") in top_genres:
-                                    boost += 1  # moderate boost for preferred genre
-                                boosted.append((tid, boost, idx))  # idx as tiebreaker
-                            # Sort: highest boost first, then original rank as tiebreaker
-                            boosted.sort(key=lambda x: (-x[1], x[2]))
+                                    boost += 2  # moderate boost for preferred genre
+                                score = boost * 20 - idx  # blended ranking score
+                                boosted.append((tid, score))
+                            boosted.sort(key=lambda x: -x[1])
                             rec_ids = [x[0] for x in boosted]
                         elapsed_ms = (time.time() - started) * 1000
                         hit = 1 if holdout_track_id in rec_ids else 0
@@ -2355,6 +2358,9 @@ class RecommenderEngine:
         if not admin and row["user_id"] != user_id:
             conn.close()
             return {"error": "只能删除自己的评论"}
+        # Clear parent_id references from child comments (replies)
+        conn.execute("UPDATE comments SET parent_id=NULL WHERE parent_id=?", (comment_id,))
+        # Delete likes on this comment
         conn.execute("DELETE FROM comment_likes WHERE comment_id=?", (comment_id,))
         conn.execute("DELETE FROM comments WHERE id=?", (comment_id,))
         conn.commit()

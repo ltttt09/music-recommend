@@ -505,6 +505,33 @@ def run_migrations(conn: sqlite3.Connection):
         conn.commit()
         # Re-fix stale FK refs that may have been introduced by the rename
         _fix_stale_fk_refs(conn)
+    # Fix comments table missing PRIMARY KEY (causes FK mismatch on comment_likes)
+    # Use CREATE new → DROP old → RENAME strategy
+    comments_pk_info = conn.execute("PRAGMA table_info(comments)").fetchall()
+    comments_has_pk = any(row["pk"] for row in comments_pk_info)
+    if not comments_has_pk:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        old_comments_cols = [row["name"] for row in comments_pk_info]
+        comments_col_list = ", ".join(old_comments_cols)
+        conn.execute("""CREATE TABLE _comments_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            track_id INTEGER NOT NULL,
+            parent_id INTEGER,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            deleted_at TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (track_id) REFERENCES tracks(id),
+            FOREIGN KEY (parent_id) REFERENCES comments(id)
+        )""")
+        conn.execute(f"INSERT INTO _comments_new ({comments_col_list}) SELECT {comments_col_list} FROM comments")
+        conn.execute("DROP TABLE comments")
+        conn.execute("ALTER TABLE _comments_new RENAME TO comments")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.commit()
+        _fix_stale_fk_refs(conn)
+
     for column, definition in TRACK_MIGRATIONS.items():
         _ensure_column(conn, "tracks", column, definition)
     for column, definition in FEEDBACK_MIGRATIONS.items():
@@ -548,12 +575,13 @@ def run_migrations(conn: sqlite3.Connection):
 
 
 def get_connection() -> sqlite3.Connection:
-    """Get a database connection with WAL mode and foreign keys enabled."""
+    """Get a database connection with WAL mode, foreign keys enabled, and busy timeout."""
     DB_DIR.mkdir(parents=True, exist_ok=True)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")  # Wait up to 5s for lock release
     conn.row_factory = sqlite3.Row
     return conn
 
