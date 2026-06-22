@@ -1,17 +1,26 @@
 """Flask 应用入口。"""
 
+import os
 import threading
 
-from flask import Flask
+from flask import Flask, send_from_directory
 from flask_cors import CORS
 
 from app.config import AUTO_INIT_ENGINE, CORS_ORIGINS
 from app.services.engine import engine
 
+# 前端打包产物的路径（相对于 backend/ 目录）
+_frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")
+
 
 def create_app() -> Flask:
     """创建并配置 Flask 应用。"""
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=os.path.join(_frontend_dist, "assets"), static_url_path="/assets")
+
+    # ---- 提供前端页面 ----
+    @app.route("/")
+    def serve_index():
+        return send_from_directory(_frontend_dist, "index.html")
 
     CORS(app, resources={r"/api/*": {"origins": CORS_ORIGINS}})
 

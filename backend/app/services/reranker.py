@@ -42,23 +42,53 @@ def profile_boost(track, score, profile):
     return max(score * boost, 0)
 
 
-def diversify(ranked_items, max_same_genre=3):
-    """P3 fix: Penalty-based diversity instead of overflow-at-end.
-    Items exceeding genre cap get exponential decay penalty but stay
-    in their ranked position, preserving ordering while ensuring diversity."""  
-    genre_counts = {}
-    result = []
-    for track_id, score, track_obj in ranked_items:
-        genre = (track_obj or {}).get("genre") or "未知"
-        count = genre_counts.get(genre, 0)
-        if count < max_same_genre:
-            result.append((track_id, score, track_obj))
-        else:
-            # Exponential decay: 0.85^(excess) for each genre over the cap
-            penalty = 0.85 ** (count - max_same_genre + 1)
-            result.append((track_id, score * penalty, track_obj))
-        genre_counts[genre] = count + 1
-    return result
+def diversify(ranked_items, lambda_param=0.7):
+    """MMR (Maximal Marginal Relevance) diversity reranking.
+
+    MMR(d) = λ * relevance(d) - (1-λ) * max_sim(d, selected)
+
+    Where:
+    - λ = 0.7: 70% weight on relevance, 30% on diversity
+    - max_sim: maximum genre similarity to any already-selected item
+    - Similarity: 1.0 if same genre, 0.0 otherwise
+
+    Greedy selection: iteratively pick the item with highest MMR score.
+    """
+    if not ranked_items:
+        return []
+
+    selected = []
+    candidates = list(ranked_items)
+
+    while candidates:
+        best_mmr = -float('inf')
+        best_idx = 0
+
+        for idx, (track_id, score, track_obj) in enumerate(candidates):
+            genre = (track_obj or {}).get("genre") or "未知"
+
+            # Compute max similarity to already-selected items
+            if selected:
+                max_sim = 0.0
+                for sel_tid, sel_score, sel_obj in selected:
+                    sel_genre = (sel_obj or {}).get("genre") or "未知"
+                    sim = 1.0 if genre == sel_genre else 0.0
+                    if sim > max_sim:
+                        max_sim = sim
+            else:
+                max_sim = 0.0
+
+            # MMR score
+            mmr = lambda_param * score - (1 - lambda_param) * max_sim
+
+            if mmr > best_mmr:
+                best_mmr = mmr
+                best_idx = idx
+
+        # Move best candidate to selected
+        selected.append(candidates.pop(best_idx))
+
+    return selected
 
 
 def rerank_candidates(candidate_scores, profile, limit):

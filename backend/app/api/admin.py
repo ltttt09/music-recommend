@@ -174,6 +174,20 @@ def import_cancel():
     return jsonify(engine.admin_cancel_import())
 
 
+@bp.route("/model-metrics/cancel", methods=["POST"])
+@require_admin
+def metrics_cancel():
+    """Cancel an in-progress model metrics evaluation job."""
+    return jsonify(engine.cancel_metrics_job())
+
+
+@bp.route("/retrain-cancel", methods=["POST"])
+@require_admin
+def retrain_cancel():
+    """Cancel an in-progress model retraining."""
+    return jsonify(engine.cancel_retrain())
+
+
 @bp.route("/seed-engagement", methods=["POST"])
 @require_admin
 def seed_engagement():
@@ -227,7 +241,7 @@ def update_hybrid_weights():
 def start_model_metrics_job():
     data = request.get_json(silent=True) or {}
     try:
-        sample_users = max(1, min(int(data.get("sample_users") or 50), 300))
+        sample_users = max(1, min(int(data.get("sample_users") or 80), 300))
         n = max(1, min(int(data.get("n") or 10), 50))
     except (TypeError, ValueError):
         return jsonify({"detail": "sample_users 和 n 必须是数字"}), 400

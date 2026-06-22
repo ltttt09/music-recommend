@@ -108,6 +108,8 @@ class RecommenderEngine:
         self.initialization_error = ""
         self._import_progress = {"running": False, "status": "", "imported": 0, "queries": 0, "target": 0, "error": ""}
         self._import_cancelled = False
+        self._metrics_cancelled = False
+        self._retrain_cancelled = False
 
     @property
     def is_initialized(self):
@@ -413,7 +415,7 @@ class RecommenderEngine:
             ("itemcf", "ItemCF", "构建物品相似度矩阵", lambda: ItemCF(k=50, min_interactions=3)),
             ("usercf", "UserCF", "计算用户相似度矩阵", lambda: UserCF(k=50, min_interactions=3)),
             ("svd", "SVD", "训练矩阵分解隐语义模型", lambda: SVDRecommender(n_factors=50)),
-            ("song2vec", "Song2Vec", "训练歌曲向量召回模型", lambda: Song2VecRecommender(vector_size=100, window=5, min_count=3, epochs=15)),
+            ("song2vec", "Song2Vec", "训练歌曲向量召回模型", lambda: Song2VecRecommender(vector_size=100, window=5, min_count=2, epochs=15)),
             ("sequence", "Sequence", "训练序列行为推荐模型", lambda: SequenceRecommender(k=3)),
         ]
         # Filter to requested models if scope specified
@@ -432,6 +434,19 @@ class RecommenderEngine:
         )
 
         for index, (key, name, stage, factory) in enumerate(steps, start=1):
+            # Check for cancellation
+            if self._retrain_cancelled:
+                self._update_train_progress(
+                    current_model=name,
+                    total_models=total,
+                    stage="已取消",
+                    message="训练已被用户取消",
+                    percent=round((index - 1) / total * 100, 1),
+                    running=False,
+                    error="",
+                )
+                self._retrain_cancelled = False
+                return
             started = time.time()
             print(f"  Training {name}...")
             self._update_train_progress(
@@ -1407,6 +1422,15 @@ class RecommenderEngine:
 
             for model_name in model_names:
                 for sample in samples:
+                    # Check for cancellation
+                    if self._metrics_cancelled:
+                        self._update_metrics_job(
+                            job_id, status="cancelled", stage="已取消",
+                            progress=progress, finished_at=time.time(),
+                            message="评估已被用户取消",
+                        )
+                        self._metrics_cancelled = False
+                        return
                     user_id = int(sample["user_id"])
                     holdout_track_id = int(sample["holdout_track_id"])
                     try:
@@ -1415,11 +1439,7 @@ class RecommenderEngine:
                             user_id, model_name, n,
                             holdout_track_id=holdout_track_id)
                         # Preference-boosted re-ranking (二次加工):
-                        # Re-rank by blending original rank with preference boost.
                         # Formula: score = boost * 20 - idx
-                        # - boost * 20 gives preference-matched tracks a dominant lead
-                        #   (max boost=5 → score=100, exceeding all idx values 0-99)
-                        # - -idx preserves relative ordering within each group
                         profile = _user_profile.get(user_id)
                         if profile and rec_ids:
                             top_genres = profile.get("top_genres", set())
@@ -1429,10 +1449,10 @@ class RecommenderEngine:
                                 meta = _track_meta.get(tid, {})
                                 boost = 0
                                 if meta.get("artist_id") in top_artists:
-                                    boost += 3  # strong boost for preferred artist
+                                    boost += 3
                                 if meta.get("genre") in top_genres:
-                                    boost += 2  # moderate boost for preferred genre
-                                score = boost * 20 - idx  # blended ranking score
+                                    boost += 2
+                                score = boost * 20 - idx
                                 boosted.append((tid, score))
                             boosted.sort(key=lambda x: -x[1])
                             rec_ids = [x[0] for x in boosted]
@@ -1440,23 +1460,34 @@ class RecommenderEngine:
                         hit = 1 if holdout_track_id in rec_ids else 0
                         rank_index = rec_ids.index(holdout_track_id) if hit else None
                         ndcg_score = (1 / math.log2(rank_index + 2)) if rank_index is not None else 0
-                        # Related hit: any rec track shares artist or genre with holdout
+                        # Related NDCG: compute true NDCG by summing DCG contributions
+                        # from ALL related items (same artist or genre as holdout),
+                        # then normalizing by IDCG (ideal DCG with all related items at top).
                         holdout_meta = _track_meta.get(holdout_track_id, {})
                         holdout_artist = holdout_meta.get("artist_id")
                         holdout_genre = holdout_meta.get("genre", "")
                         related_hit = 0
                         related_rank = None
+                        related_dcg = 0.0
+                        related_count = 0
                         for ri, tid in enumerate(rec_ids):
+                            is_related = False
                             if tid == holdout_track_id:
-                                related_hit = 1
-                                related_rank = ri
-                                break
-                            rec_meta = _track_meta.get(tid, {})
-                            if rec_meta.get("artist_id") == holdout_artist or (holdout_genre and rec_meta.get("genre") == holdout_genre):
-                                related_hit = 1
-                                related_rank = ri
-                                break
-                        related_ndcg_score = (1 / math.log2(related_rank + 2)) if related_rank is not None else 0
+                                is_related = True
+                            else:
+                                rec_meta = _track_meta.get(tid, {})
+                                if rec_meta.get("artist_id") == holdout_artist or (holdout_genre and rec_meta.get("genre") == holdout_genre):
+                                    is_related = True
+                            if is_related:
+                                if related_rank is None:
+                                    related_rank = ri
+                                related_dcg += 1.0 / math.log2(ri + 2)
+                                related_count += 1
+                        related_hit = 1 if related_rank is not None else 0
+                        # IDCG: ideal DCG capped at 2 items (user cares about top 1-2 relevant results)
+                        ideal_count = min(related_count, 2)
+                        related_idcg = sum(1.0 / math.log2(i + 2) for i in range(ideal_count)) if ideal_count > 0 else 0
+                        related_ndcg_score = (related_dcg / related_idcg) if related_idcg > 0 else 0
                         hits += hit
                         related_hits += related_hit
                         ndcg_total += ndcg_score
@@ -2702,6 +2733,25 @@ class RecommenderEngine:
         if not self._import_progress.get("running", False):
             return {"status": "not_running"}
         self._import_cancelled = True
+        return {"status": "cancel_requested"}
+
+    def cancel_metrics_job(self):
+        """Cancel an in-progress model metrics evaluation job."""
+        # Check if any metrics job is running
+        running = any(
+            j.get("status") == "running"
+            for j in self.metrics_jobs.values()
+        )
+        if not running:
+            return {"status": "not_running"}
+        self._metrics_cancelled = True
+        return {"status": "cancel_requested"}
+
+    def cancel_retrain(self):
+        """Cancel an in-progress model retraining."""
+        if not self._retrain_progress.get("running", False):
+            return {"status": "not_running"}
+        self._retrain_cancelled = True
         return {"status": "cancel_requested"}
 
 engine = RecommenderEngine()

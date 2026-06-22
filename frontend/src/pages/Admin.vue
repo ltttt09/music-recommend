@@ -420,7 +420,7 @@
                 <span><b>{{ item.related_hits ?? item.hits }}/{{ item.cases }}</b><small>相关命中/样本</small></span>
                 <span><b>{{ percent(item.related_hit_rate_at_100 ?? item.hit_rate_at_100) }}</b><small>相关命中率@100</small></span>
                 <span><b>{{ percent(item.related_ndcg_at_100 ?? item.ndcg_at_100) }}</b><small>相关NDCG@100</small></span>
-                <span><b>{{ percent(item.coverage ?? item.coverage_percent) }}</b><small>覆盖率</small></span>
+                <span><b>{{ (item.coverage ?? item.coverage_percent) > 1 ? (Number(item.coverage ?? item.coverage_percent) || 0).toFixed(1) + '%' : percent(item.coverage ?? item.coverage_percent) }}</b><small>覆盖率</small></span>
               </div>
             </article>
           </div>
@@ -499,8 +499,14 @@
                   <button class="btn btn-primary" @click="startTraining" :disabled="retraining || metricsLoading">
                     {{ retraining ? '训练中...' : '开始训练' }}
                   </button>
+                  <button v-if="retraining" class="btn btn-danger" @click="cancelTraining">
+                    停止训练
+                  </button>
                   <button class="btn btn-ghost" @click="startMetricsEvaluation" :disabled="metricsLoading || retraining">
                     {{ metricsLoading ? '评估中...' : '仅评估' }}
+                  </button>
+                  <button v-if="metricsLoading" class="btn btn-danger" @click="cancelEvaluation">
+                    停止评估
                   </button>
                   <button class="btn btn-danger" @click="resetAllModels" :disabled="retraining || metricsLoading">
                     重置所有模型
@@ -733,7 +739,7 @@ const metricsLoading = ref(false)
 const metricsRefreshing = ref(false)
 const metricsError = ref('')
 const metricJob = ref(null)
-const metricSampleUsers = ref(50)
+const metricSampleUsers = ref(80)
 let metricsPollTimer = null
 let rankResizeObserver = null
 let rankResizeFrame = 0
@@ -1139,11 +1145,12 @@ async function saveModelWeights() {
 function exportModelReport() {
   const m = metrics.value || {}
   const p = (v) => ((Number(v) || 0) * 100).toFixed(2) + '%'
+  const pp = (v) => { const n = Number(v) || 0; return n > 1 ? n.toFixed(2) + '%' : (n * 100).toFixed(2) + '%' }
   const dateStr = new Date().toLocaleString('zh-CN')
   const rows = sortedEvaluationRows.value
-  const modelRowsHtml = rows.map((r, i) => `<tr><td>${i + 1}</td><td><b>${r.model_label || r.model}</b></td><td>${p(r.hit_rate_at_100)}</td><td>${p(r.related_hit_rate_at_100)}</td><td>${p(r.ndcg_at_100)}</td><td>${p(r.related_ndcg_at_100)}</td><td>${p(r.precision_at_100)}</td><td>${p(r.recall_at_100)}</td><td>${p(r.coverage)}</td><td>${p(r.diversity)}</td><td>${r.cases}</td></tr>`).join('\n')
+  const modelRowsHtml = rows.map((r, i) => `<tr><td>${i + 1}</td><td><b>${r.model_label || r.model}</b></td><td>${p(r.hit_rate_at_100)}</td><td>${p(r.related_hit_rate_at_100)}</td><td>${p(r.ndcg_at_100)}</td><td>${p(r.related_ndcg_at_100)}</td><td>${p(r.precision_at_100)}</td><td>${p(r.recall_at_100)}</td><td>${pp(r.coverage)}</td><td>${p(r.diversity)}</td><td>${r.cases}</td></tr>`).join('\n')
   const weightsHtml = MODEL_WEIGHT_KEYS.map(k => `<tr><td>${modelLabel(k)}</td><td>${modelWeights[k]}%</td></tr>`).join('\n')
-  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>SoundMind 评估报告</title><style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;max-width:960px;margin:40px auto;padding:0 20px;color:#333;background:#fafafa}h1{text-align:center;color:#2d3436;margin-bottom:4px}h2{color:#6c5ce7;margin-top:32px;border-bottom:2px solid #6c5ce7;padding-bottom:6px}.meta{text-align:center;color:#888;font-size:14px;margin-bottom:28px}.card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.06);margin-bottom:24px}table{width:100%;border-collapse:collapse;font-size:14px}th{background:#6c5ce7;color:#fff;padding:10px 14px;text-align:left;font-size:12px}td{padding:10px 14px;border-bottom:1px solid #eee}tr:hover td{background:#f5f6fa}.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-top:20px}.kpi{text-align:center;padding:16px;background:#f5f6fa;border-radius:12px}.kpi b{display:block;font-size:28px;color:#6c5ce7}.kpi small{color:#888;font-size:12px}.note{color:#888;font-size:13px;line-height:1.6;margin-top:16px}</style></head><body><h1>SoundMind 模型评估报告</h1><p class="meta">导出时间：${dateStr}　|　评估类型：${m.type || '快速指标'}　|　样本用户：${m.sample_users || '-'}　|　总用户：${m.total_users || '-'}</p><div class="card"><h2>综合指标</h2><div class="kpi-grid"><div class="kpi"><b>${p(m.hit_rate_at_100)}</b><small>命中率@100</small></div><div class="kpi"><b>${p(m.related_hit_rate_at_100)}</b><small>相关命中率@100</small></div><div class="kpi"><b>${p(m.ndcg_at_100)}</b><small>NDCG@100</small></div><div class="kpi"><b>${p(m.related_ndcg_at_100)}</b><small>相关NDCG@100</small></div><div class="kpi"><b>${p(m.coverage_percent || m.coverage)}</b><small>覆盖率</small></div><div class="kpi"><b>${p(m.diversity)}</b><small>多样性</small></div></div></div><div class="card"><h2>各模型详细指标</h2><table><thead><tr><th>#</th><th>模型</th><th>命中率@100</th><th>相关命中率@100</th><th>NDCG@100</th><th>相关NDCG@100</th><th>精确率@100</th><th>召回率@100</th><th>覆盖率</th><th>多样性</th><th>样本数</th></tr></thead><tbody>${modelRowsHtml}</tbody></table></div><div class="card"><h2>Hybrid 融合权重</h2><table><thead><tr><th>子模型</th><th>权重</th></tr></thead><tbody>${weightsHtml}</tbody></table></div>${m.notes ? `<p class="note">备注：${m.notes}</p>` : ''}</body></html>`
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>SoundMind 评估报告</title><style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;max-width:960px;margin:40px auto;padding:0 20px;color:#333;background:#fafafa}h1{text-align:center;color:#2d3436;margin-bottom:4px}h2{color:#6c5ce7;margin-top:32px;border-bottom:2px solid #6c5ce7;padding-bottom:6px}.meta{text-align:center;color:#888;font-size:14px;margin-bottom:28px}.card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.06);margin-bottom:24px}table{width:100%;border-collapse:collapse;font-size:14px}th{background:#6c5ce7;color:#fff;padding:10px 14px;text-align:left;font-size:12px}td{padding:10px 14px;border-bottom:1px solid #eee}tr:hover td{background:#f5f6fa}.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-top:20px}.kpi{text-align:center;padding:16px;background:#f5f6fa;border-radius:12px}.kpi b{display:block;font-size:28px;color:#6c5ce7}.kpi small{color:#888;font-size:12px}.note{color:#888;font-size:13px;line-height:1.6;margin-top:16px}</style></head><body><h1>SoundMind 模型评估报告</h1><p class="meta">导出时间：${dateStr}　|　评估类型：${m.type || '快速指标'}　|　样本用户：${m.sample_users || '-'}　|　总用户：${m.total_users || '-'}</p><div class="card"><h2>综合指标</h2><div class="kpi-grid"><div class="kpi"><b>${p(m.hit_rate_at_100)}</b><small>命中率@100</small></div><div class="kpi"><b>${p(m.related_hit_rate_at_100)}</b><small>相关命中率@100</small></div><div class="kpi"><b>${p(m.ndcg_at_100)}</b><small>NDCG@100</small></div><div class="kpi"><b>${p(m.related_ndcg_at_100)}</b><small>相关NDCG@100</small></div><div class="kpi"><b>${pp(m.coverage_percent || m.coverage)}</b><small>覆盖率</small></div><div class="kpi"><b>${p(m.diversity)}</b><small>多样性</small></div></div></div><div class="card"><h2>各模型详细指标</h2><table><thead><tr><th>#</th><th>模型</th><th>命中率@100</th><th>相关命中率@100</th><th>NDCG@100</th><th>相关NDCG@100</th><th>精确率@100</th><th>召回率@100</th><th>覆盖率</th><th>多样性</th><th>样本数</th></tr></thead><tbody>${modelRowsHtml}</tbody></table></div><div class="card"><h2>Hybrid 融合权重</h2><table><thead><tr><th>子模型</th><th>权重</th></tr></thead><tbody>${weightsHtml}</tbody></table></div>${m.notes ? `<p class="note">备注：${m.notes}</p>` : ''}</body></html>`
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -1328,6 +1335,24 @@ async function cancelItunesImport() {
     itunesImportMsg.value = '已请求取消导入，等待当前查询完成...'
   } catch(e) {
     itunesImportMsg.value = '取消失败: ' + (e.message || e)
+  }
+}
+
+async function cancelTraining() {
+  try {
+    await adminFetch('/api/admin/retrain-cancel', { method: 'POST' })
+    retrainMsg.value = '已请求停止训练，等待当前模型完成...'
+  } catch(e) {
+    retrainMsg.value = '停止失败: ' + (e.message || e)
+  }
+}
+
+async function cancelEvaluation() {
+  try {
+    await adminFetch('/api/admin/model-metrics/cancel', { method: 'POST' })
+    metricsError.value = '已请求停止评估，等待当前步骤完成...'
+  } catch(e) {
+    metricsError.value = '停止失败: ' + (e.message || e)
   }
 }
 
