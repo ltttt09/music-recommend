@@ -1426,7 +1426,7 @@ class RecommenderEngine:
                     if self._metrics_cancelled:
                         self._update_metrics_job(
                             job_id, status="cancelled", stage="已取消",
-                            progress=progress, finished_at=time.time(),
+                            progress=int((current / (len(model_names) * len(samples))) * 100) if samples and model_names else 0, finished_at=time.time(),
                             message="评估已被用户取消",
                         )
                         self._metrics_cancelled = False
