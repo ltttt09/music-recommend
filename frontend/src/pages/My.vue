@@ -76,6 +76,7 @@
             <span class="section-badge">{{ likes.length }} 首</span>
           </div>
           <TrackList v-if="likes.length" :items="pagedLikes" show-unlike @unlike="unlikeTrack" />
+          <p v-if="likeMsg" class="pf-msg" :class="{ ok: likeMsg.includes('已取消') }">{{ likeMsg }}</p>
           <div v-else-if="!likesLoading" class="my-empty-card">
             <div class="empty-visual">♥</div>
             <p>还没有喜欢的歌曲</p>
@@ -138,7 +139,20 @@
           <div v-if="playlists.length" class="pl-grid">
             <div v-for="pl in playlists" :key="pl.id" class="pl-card" @click="$router.push('/playlist/'+pl.id)">
               <div class="pl-cover" :style="{ background: grad(pl.id) }">
-                <div class="pl-mosaic"><span v-for="c in 4" :key="c" :style="{ background: grad(pl.id*c) }"></span></div>
+                <div class="pl-mosaic">
+                  <span
+                    v-for="c in 4"
+                    :key="c"
+                    :style="{ background: (pl.covers && pl.covers[c-1] && pl.covers[c-1].image_url) ? '' : grad(pl.id*c) }"
+                  >
+                    <img
+                      v-if="pl.covers && pl.covers[c-1] && pl.covers[c-1].image_url"
+                      :src="pl.covers[c-1].image_url"
+                      alt=""
+                      referrerpolicy="no-referrer"
+                    />
+                  </span>
+                </div>
               </div>
               <div class="pl-info">
                 <span class="pl-name">{{ pl.name }}</span>
@@ -232,6 +246,7 @@
 
 <script setup>
 import { ref, computed, reactive, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '../api.js'
 import { auth, getUserId } from '../auth.js'
 import TrackList from '../components/TrackList.vue'
@@ -249,6 +264,7 @@ const ch = s => /[^\x00-\x7F]/.test((s || '?')[0]) ? '♪' : (s || '?')[0].toUpp
 const avatarGradient = 'linear-gradient(135deg, var(--color-primary), var(--color-accent))'
 const imgFailed = reactive({})
 
+const route = useRoute()
 const tab = ref('likes')
 const tabs = [
   { id: 'likes', label: '喜欢', icon: '♥' },
@@ -284,11 +300,27 @@ const likesPage = ref(1)
 const likesSize = 12
 const likesPages = computed(() => Math.max(1, Math.ceil(likes.value.length / likesSize)))
 const pagedLikes = computed(() => likes.value.slice((likesPage.value - 1) * likesSize, likesPage.value * likesSize))
+const likeMsg = ref('')
+let likeMsgTimer = null
 async function loadLikes() {
   likesLoading.value = true
   try { const d = await api.getLikedTracks(getUserId()); likes.value = d.items || [] } finally { likesLoading.value = false }
 }
-async function unlikeTrack(track) { await api.unlikeTrack(getUserId(), track.id); loadLikes() }
+async function unlikeTrack(track) {
+  const prev = likes.value
+  likes.value = likes.value.filter(t => t.id !== track.id)
+  likeMsg.value = '已取消喜欢'
+  if (likeMsgTimer) clearTimeout(likeMsgTimer)
+  likeMsgTimer = setTimeout(() => { likeMsg.value = '' }, 2000)
+  try {
+    await api.unlikeTrack(getUserId(), track.id)
+  } catch (e) {
+    likes.value = prev
+    likeMsg.value = e.message || '取消喜欢失败'
+    if (likeMsgTimer) clearTimeout(likeMsgTimer)
+    likeMsgTimer = setTimeout(() => { likeMsg.value = '' }, 3000)
+  }
+}
 
 // History
 const history = ref([])
@@ -431,7 +463,20 @@ async function saveProfile() {
   } catch (e) { saveMsg.value = e.message || '保存失败'; saveOk.value = false } finally { saving.value = false }
 }
 
-onMounted(() => { loadProfile(); loadLikes() })
+onMounted(() => {
+  const queryTab = route.query.tab
+  const validTabs = tabs.map(t => t.id)
+  if (queryTab && validTabs.includes(queryTab)) {
+    tab.value = queryTab
+    loadTab(queryTab)
+    // Also load profile data regardless (needed for hero card)
+    loadProfile()
+    if (queryTab === 'likes') loadLikes()
+  } else {
+    loadProfile()
+    loadLikes()
+  }
+})
 </script>
 
 <style scoped>
@@ -707,13 +752,15 @@ onMounted(() => { loadProfile(); loadLikes() })
 .pl-cover {
   aspect-ratio: 1;
   display: flex; align-items: center; justify-content: center;
+  position: relative;
 }
 .pl-mosaic {
   display: grid; grid-template-columns: 1fr 1fr;
-  width: 60%; height: 60%;
-  gap: 3px; border-radius: 10px; overflow: hidden; opacity: .7;
+  width: 70%; height: 70%;
+  gap: 3px; border-radius: 10px; overflow: hidden; opacity: .9;
 }
-.pl-mosaic span { border-radius: 3px; }
+.pl-mosaic span { border-radius: 3px; overflow: hidden; }
+.pl-mosaic img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .pl-info { padding: 12px 14px; }
 .pl-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
 .pl-cnt { font-size: 11px; color: var(--color-text-muted); margin-top: 3px; }

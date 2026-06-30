@@ -23,11 +23,16 @@ def _has_char_range(text: str, start: int, end: int) -> bool:
     return any(start <= ord(ch) <= end for ch in text)
 
 
-def infer_language_group(language: str = "", title: str = "", artist: str = "", album: str = "", genre: str = "") -> str:
+def infer_language_group(language: str = "", title: str = "", artist: str = "", album: str = "", genre: str = "", lyrics: str = "") -> str:
     """Infer a coarse language group from track metadata.
 
-    Uses a multi-layer strategy: genre keywords → Unicode character detection →
-    Latin character fallback → country storefront code.
+    Uses a multi-layer strategy: genre keywords → lyrics character detection →
+    title/artist character detection → Latin fallback → country storefront code.
+
+    When lyrics are available, they are used as the primary source for character
+    detection because they directly reflect the song's actual sung language.
+    Title and artist names are less reliable (e.g. an English-titled song by a
+    Chinese artist may still be sung in Chinese).
 
     IMPORTANT distinction: genre keywords must be LANGUAGE indicators (describing
     what language the song is sung in), NOT style descriptions. For example:
@@ -42,14 +47,18 @@ def infer_language_group(language: str = "", title: str = "", artist: str = "", 
     # Album names are market-localized translations (e.g. "加州旅馆" for "Hotel California")
     # that don't reflect the song's actual language. Title + artist are more reliable.
     text = f"{title or ''} {artist or ''}"
+    lyrics_text = (lyrics or "").strip()
+    # When lyrics available, use lyrics as primary source for character detection
+    # because lyrics directly reflect the sung language, not just the artist's origin.
+    detect_text = lyrics_text if lyrics_text else text
     genre_text = (genre or "").strip().lower()
-    has_cjk = _has_char_range(text, 0x4E00, 0x9FFF)
-    has_kana = _has_char_range(text, 0x3040, 0x30FF)
-    has_hangul = _has_char_range(text, 0xAC00, 0xD7AF)
-    has_cyrillic = _has_char_range(text, 0x0400, 0x04FF)
-    has_devanagari = _has_char_range(text, 0x0900, 0x097F)
-    has_thai = _has_char_range(text, 0x0E00, 0x0E7F)
-    has_arabic_script = _has_char_range(text, 0x0600, 0x06FF)
+    has_cjk = _has_char_range(detect_text, 0x4E00, 0x9FFF)
+    has_kana = _has_char_range(detect_text, 0x3040, 0x30FF)
+    has_hangul = _has_char_range(detect_text, 0xAC00, 0xD7AF)
+    has_cyrillic = _has_char_range(detect_text, 0x0400, 0x04FF)
+    has_devanagari = _has_char_range(detect_text, 0x0900, 0x097F)
+    has_thai = _has_char_range(detect_text, 0x0E00, 0x0E7F)
+    has_arabic_script = _has_char_range(detect_text, 0x0600, 0x06FF)
 
     # Layer 1: genre keyword mapping (highest priority, overrides everything)
     # ONLY language-indicator keywords — NOT music style descriptions
@@ -62,7 +71,11 @@ def infer_language_group(language: str = "", title: str = "", artist: str = "", 
         # Chinese (ONLY language-specific: 华语=Chinese-language, not 民谣=folk style)
         (["华语", "華語", "国语", "國語", "粤语", "粵語", "mandopop", "cantopop",
           "chinese pop", "中文歌", "古风", "国语流行", "粤语流行", "中文嘻哈",
-          "中文摇滚", "华语流行", "华语音乐", "華語流行", "國語流行", "粵語流行"], "ZH"),
+          "中文摇滚", "华语流行", "华语音乐", "華語流行", "國語流行", "粵語流行",
+          "廣東歌", "广东歌", "香港流行樂", "香港流行乐", "華語流行樂", "华语流行乐",
+          "華語音樂", "国语流行乐", "國語流行樂", "粵語流行樂", "粤语流行乐",
+          "中文流行", "中文音樂", "中文音乐", "中文流行乐", "chinese music",
+          "mandarin pop", "mandarin chinese", "c-pop", "c-pop"], "ZH"),
         # French
         (["chanson", "french pop", "french rap", "français"], "FR"),
         # Spanish (including Mexican music which is sung in Spanish, NOT Portuguese)
@@ -107,7 +120,9 @@ def infer_language_group(language: str = "", title: str = "", artist: str = "", 
     # Layer 3: Latin character fallback (before country code)
     # Songs with English titles from CN/TW/HK storefronts should be EN, not ZH.
     # The storefront country is not the song's language.
-    has_latin = any("A" <= ch.upper() <= "Z" for ch in text)
+    # When lyrics are available, detect_text already points to lyrics;
+    # otherwise it points to title+artist.
+    has_latin = any("A" <= ch.upper() <= "Z" for ch in detect_text)
     if has_latin:
         return "EN"
 
@@ -294,6 +309,7 @@ CREATE TABLE IF NOT EXISTS user_playlists (
     user_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
+    cover_url TEXT DEFAULT '',
     is_public INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)

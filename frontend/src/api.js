@@ -201,4 +201,11 @@ export default {
   deleteUserPlaylist(playlistId) {
     return fetchJSON(`/tracks/user-playlist/${playlistId}`, { method: "DELETE" });
   },
+  updatePlaylistCover(playlistId, coverUrl) {
+    return fetchJSON(`/tracks/user-playlist/${playlistId}/cover`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cover_url: coverUrl }),
+    });
+  },
 };

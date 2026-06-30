@@ -44,6 +44,24 @@ def liked_tracks(user_id):
     return jsonify(engine.get_liked_tracks(user_id))
 
 
+@bp.route("/<int:user_id>/liked/<int:track_id>", methods=["DELETE"])
+def unlike_track(user_id, track_id):
+    _, error = require_same_user(user_id)
+    if error:
+        return error
+    try:
+        from src.db.repository import FeedbackRepo
+        from src.db.schema import get_connection
+        FeedbackRepo.clear_likes(user_id, track_id)
+        conn = get_connection()
+        conn.execute("DELETE FROM favorites WHERE user_id=? AND track_id=?", (user_id, track_id))
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "ok", "message": "已取消喜欢"})
+    except Exception as e:
+        return jsonify({"detail": str(e)}), 500
+
+
 @bp.route("/<int:user_id>/recommend", methods=["GET"])
 def recommend(user_id):
     _, error = require_same_user(user_id)

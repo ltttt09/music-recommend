@@ -143,6 +143,23 @@ def delete_user_playlist(playlist_id):
     return jsonify(engine.delete_user_playlist(playlist_id))
 
 
+@bp.route("/user-playlist/<int:playlist_id>/cover", methods=["PUT"])
+def update_playlist_cover(playlist_id):
+    user_id, error = require_user()
+    if error:
+        return error
+    if not _owns_user_playlist(user_id, playlist_id):
+        return jsonify({"detail": "不能修改其他用户的歌单"}), 403
+    data = request.get_json(silent=True) or {}
+    cover_url = data.get("cover_url", "")
+    if len(cover_url) > 2000000:
+        return jsonify({"detail": "封面数据过大"}), 400
+    result = engine.update_user_playlist_cover(playlist_id, cover_url)
+    if "error" in result:
+        return jsonify({"detail": result["error"]}), 404
+    return jsonify(result)
+
+
 @bp.route("/<int:track_id>/favorite", methods=["POST"])
 def toggle_favorite(track_id):
     user_id, error = require_user()

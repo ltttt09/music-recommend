@@ -49,8 +49,11 @@ def _language_genre_prefixes(language: str) -> set[str]:
 
 def _fill_missing_language_groups(conn):
     rows = conn.execute(
-        """SELECT t.id, t.title, t.album, t.genre, t.language, a.name AS artist_name
-           FROM tracks t JOIN artists a ON t.artist_id=a.id
+        """SELECT t.id, t.title, t.album, t.genre, t.language,
+                  a.name AS artist_name, lc.lyrics AS lyrics
+           FROM tracks t
+           JOIN artists a ON t.artist_id=a.id
+           LEFT JOIN lyrics_cache lc ON lc.track_id = t.id
            WHERE COALESCE(t.language_group, '') = ''"""
     ).fetchall()
     for row in rows:
@@ -60,6 +63,7 @@ def _fill_missing_language_groups(conn):
             row["artist_name"],
             row["album"],
             row["genre"],
+            row["lyrics"] if "lyrics" in row.keys() else "",
         )
         if group:
             conn.execute("UPDATE tracks SET language_group=? WHERE id=?", (group, row["id"]))

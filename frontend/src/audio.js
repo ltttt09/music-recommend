@@ -95,7 +95,7 @@ function getAudio() {
 
 export function playTrack(track) {
   const audio = getAudio()
-  const normalizedTrack = { ...track, id: track.id || track.track_id }
+  const normalizedTrack = { ...track, id: track.track_id || track.id }
   logAction('audio_play_request', {
     entity_type: 'track',
     entity_id: normalizedTrack.id,

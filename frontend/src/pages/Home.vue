@@ -119,7 +119,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, onActivated, ref } from 'vue'
 import api from '../api.js'
 import { auth } from '../auth.js'
 import TrackCard from '../components/TrackCard.vue'
@@ -184,7 +184,7 @@ function coverChar(title = '') {
 function normalizeTrack(item = {}) {
   return {
     ...item,
-    id: item.id || item.track_id,
+    id: item.track_id || item.id,
     title: item.title || item.track_title || item.track_name || '未知歌曲',
     artist_name: item.artist_name || item.artist || '未知艺人',
     image_url: item.image_url || '',
@@ -443,6 +443,23 @@ onMounted(() => {
   window.addEventListener('track-played', onTrackPlayed)
   // Smart local refresh: data invalidated only refreshes affected section
   window.addEventListener('home-data-invalidated', onDataInvalidated)
+})
+
+let lastLoadedUserId = null
+onActivated(() => {
+  const currentUserId = auth.userId || Number(localStorage.getItem('user_id')) || 0
+  if (lastLoadedUserId !== null && lastLoadedUserId !== currentUserId) {
+    recommendations.value = []
+    recent.value = []
+    favorites.value = []
+    profilePlaylists.value = []
+    generatedPlaylists.value = []
+    user.value = null
+    userStats.value = null
+    loading.value.recs = true
+    loadHome()
+  }
+  lastLoadedUserId = currentUserId
 })
 
 onUnmounted(() => {

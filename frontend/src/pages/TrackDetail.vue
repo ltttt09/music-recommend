@@ -314,7 +314,7 @@ function play(t) {
     return
   }
   playTrack({
-    id: t.id || t.track_id,
+    id: t.track_id || t.id,
     title: t.title,
     artist_name: t.artist_name,
     image_url: t.image_url,

@@ -16,19 +16,20 @@ import My from './pages/My.vue'
 import NowPlaying from './pages/NowPlaying.vue'
 
 const keepAlive = { keepAlive: true }
+const requireAuth = { requireAuth: true }
 const detailPage = { scrollTop: true }
 
 const routes = [
   { path: '/', name: 'Home', component: Home, meta: keepAlive },
   { path: '/browse', name: 'Browse', component: Browse, meta: keepAlive },
-  { path: '/insights', name: 'Insights', component: Insights, meta: keepAlive },
-  { path: '/favorites', name: 'Favorites', component: Favorites, meta: keepAlive },
-  { path: '/profile', name: 'Profile', component: Profile, meta: keepAlive },
-  { path: '/my', name: 'My', component: My, meta: keepAlive },
-  { path: '/track/:id', name: 'TrackDetail', component: TrackDetail, props: true },
-  { path: '/playing/:id', name: 'NowPlaying', component: NowPlaying, props: true },
-  { path: '/recommend', name: 'Recommend', component: Recommend, meta: keepAlive },
-  { path: '/history', name: 'History', component: History, meta: keepAlive },
+  { path: '/insights', name: 'Insights', component: Insights, meta: { ...keepAlive, ...requireAuth } },
+  { path: '/favorites', name: 'Favorites', component: Favorites, meta: { ...keepAlive, ...requireAuth } },
+  { path: '/profile', name: 'Profile', component: Profile, meta: { ...keepAlive, ...requireAuth } },
+  { path: '/my', name: 'My', component: My, meta: { ...keepAlive, ...requireAuth } },
+  { path: '/track/:id', name: 'TrackDetail', component: TrackDetail, props: true, meta: detailPage },
+  { path: '/playing/:id', name: 'NowPlaying', component: NowPlaying, props: true, meta: detailPage },
+  { path: '/recommend', name: 'Recommend', component: Recommend, meta: { ...keepAlive, ...requireAuth } },
+  { path: '/history', name: 'History', component: History, meta: { ...keepAlive, ...requireAuth } },
   { path: '/onboarding', redirect: '/recommend' },
   { path: '/playlist/:id', name: 'Playlist', component: Playlist, props: true, meta: detailPage },
   { path: '/login', name: 'Login', component: Login },
@@ -37,12 +38,23 @@ const routes = [
   { path: '/admin/track/:id', name: 'AdminTrackDetail', component: AdminTrackDetail, props: true, meta: { adminLayout: true, scrollTop: true } },
 ]
 
-export default createRouter({
+const router = createRouter({
   history: createWebHashHistory(),
   routes,
   scrollBehavior(to, from, savedPosition) {
     if (savedPosition) return savedPosition
-    if (to.meta?.scrollTop || to.name === 'TrackDetail' || to.name === 'NowPlaying') return { top: 0 }
-    return false
+    // 跳转到新页面时从头显示（需求7）
+    return { top: 0 }
   },
 })
+
+// 路由守卫：未登录用户跳转到登录页（Bug4）
+router.beforeEach((to, from, next) => {
+  if (to.meta?.requireAuth && !localStorage.getItem('token')) {
+    next({ name: 'Login', query: { redirect: to.fullPath } })
+  } else {
+    next()
+  }
+})
+
+export default router

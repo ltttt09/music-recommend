@@ -291,3 +291,33 @@ def user_profile(user_id):
 @require_admin
 def data_sources():
     return jsonify(engine.admin_data_sources())
+
+
+@bp.route("/lyrics/batch-fetch", methods=["POST"])
+@require_admin
+def batch_fetch_lyrics():
+    """批量获取歌词，后台线程执行。"""
+    data = request.get_json(silent=True) or {}
+    limit = data.get("limit", 500)
+    return jsonify(engine.batch_fetch_lyrics(limit))
+
+
+@bp.route("/lyrics/progress", methods=["GET"])
+@require_admin
+def lyrics_progress():
+    """获取歌词批量获取进度。"""
+    return jsonify(engine.admin_lyrics_progress())
+
+
+@bp.route("/lyrics/cancel", methods=["POST"])
+@require_admin
+def lyrics_cancel():
+    """取消歌词批量获取。"""
+    return jsonify(engine.admin_cancel_lyrics())
+
+
+@bp.route("/lyrics/recompute-languages", methods=["POST"])
+@require_admin
+def recompute_languages():
+    """根据歌词数据重新计算所有歌曲的语言分组。"""
+    return jsonify(engine.admin_recompute_language_groups())

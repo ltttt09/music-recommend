@@ -22,6 +22,7 @@ from app.services.reranker import normalize_scores, rerank_candidates
 from src.db.schema import init_db, get_connection, infer_language_group
 from src.db.repository import (
     TrackRepo, ArtistRepo, UserRepo, ListeningRepo, FeedbackRepo, PlaylistRepo,
+    _fill_missing_language_groups,
 )
 from src.data.itunes_full import ITUNES_FULL as REAL_SONGS
 from src.models.cf_model import UserCF, ItemCF, SVDRecommender
@@ -110,6 +111,8 @@ class RecommenderEngine:
         self._import_cancelled = False
         self._metrics_cancelled = False
         self._retrain_cancelled = False
+        self._lyrics_progress = {"running": False, "status": "", "fetched": 0, "found": 0, "target": 0, "error": ""}
+        self._lyrics_cancelled = False
 
     @property
     def is_initialized(self):
@@ -1746,6 +1749,123 @@ class RecommenderEngine:
             "message": "" if lyrics else "暂未找到这首歌的歌词",
         }
 
+    def batch_fetch_lyrics(self, limit=500):
+        """批量获取歌词，在后台线程中运行。返回立即开始的状态。"""
+        if self._lyrics_progress.get("running"):
+            return {"status": "already_running"}
+
+        conn = get_connection()
+        total = conn.execute(
+            """SELECT COUNT(*) FROM tracks t
+               WHERE NOT EXISTS (SELECT 1 FROM lyrics_cache lc WHERE lc.track_id = t.id)
+               AND t.preview_url != ''"""
+        ).fetchone()[0]
+        conn.close()
+        target = min(limit, total) if total > 0 else 0
+
+        self._lyrics_progress = {
+            "running": True,
+            "status": "starting",
+            "fetched": 0,
+            "found": 0,
+            "target": target,
+            "error": "",
+        }
+        self._lyrics_cancelled = False
+
+        def _run():
+            try:
+                conn = get_connection()
+                rows = conn.execute(
+                    """SELECT t.id, t.title, a.name AS artist_name
+                       FROM tracks t JOIN artists a ON t.artist_id = a.id
+                       WHERE NOT EXISTS (SELECT 1 FROM lyrics_cache lc WHERE lc.track_id = t.id)
+                       AND t.preview_url != ''
+                       LIMIT ?""",
+                    (target,),
+                ).fetchall()
+                conn.close()
+
+                fetched = 0
+                found = 0
+                for row in rows:
+                    if self._lyrics_cancelled:
+                        break
+                    track_id = row["id"]
+                    title = re.sub(r"\s*[\(\[].*?[\)\]]", "", row["title"] or "").strip()
+                    title = re.sub(r"\s+-\s+.*$", "", title).strip()
+                    artist = re.split(r"\s*(?:&|,|feat\.?|ft\.?)\s*", row["artist_name"] or "", flags=re.I)[0].strip()
+                    lyrics = ""
+                    source = "lyrics.ovh"
+                    status = "missing"
+                    if title and artist:
+                        url = f"https://api.lyrics.ovh/v1/{_uparse.quote(artist)}/{_uparse.quote(title)}"
+                        try:
+                            with _urequest.urlopen(url, timeout=5) as response:
+                                payload = _json.loads(response.read().decode("utf-8", errors="ignore"))
+                            lyrics = (payload.get("lyrics") or "").strip()
+                            status = "found" if lyrics else "missing"
+                        except Exception:
+                            status = "unavailable"
+                    c = get_connection()
+                    c.execute(
+                        """INSERT OR REPLACE INTO lyrics_cache (track_id, lyrics, source, status, fetched_at)
+                           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                        (track_id, lyrics, source, status),
+                    )
+                    c.commit()
+                    c.close()
+                    fetched += 1
+                    if lyrics:
+                        found += 1
+                    self._lyrics_progress["fetched"] = fetched
+                    self._lyrics_progress["found"] = found
+                    self._lyrics_progress["status"] = f"fetching: {fetched}/{target}"
+                    time.sleep(0.5)
+
+                self._lyrics_progress["running"] = False
+                if self._lyrics_cancelled:
+                    self._lyrics_progress["status"] = "cancelled"
+                    self._lyrics_cancelled = False
+                else:
+                    self._lyrics_progress["status"] = "completed"
+            except Exception as exc:
+                self._lyrics_progress["running"] = False
+                self._lyrics_progress["status"] = "error"
+                self._lyrics_progress["error"] = str(exc)
+
+        _threading.Thread(target=_run, daemon=True).start()
+        return {"status": "started", "target": target}
+
+    def admin_lyrics_progress(self):
+        """返回当前歌词批量获取进度。"""
+        return dict(self._lyrics_progress)
+
+    def admin_cancel_lyrics(self):
+        """取消进行中的歌词批量获取。"""
+        if not self._lyrics_progress.get("running", False):
+            return {"status": "not_running"}
+        self._lyrics_cancelled = True
+        return {"status": "cancel_requested"}
+
+    def admin_recompute_language_groups(self):
+        """清空所有 tracks 的 language_group 并根据歌词数据重新计算。"""
+        conn = get_connection()
+        total = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+        conn.execute("UPDATE tracks SET language_group=''")
+        conn.commit()
+        _fill_missing_language_groups(conn)
+        rows = conn.execute(
+            "SELECT language_group, COUNT(*) as cnt FROM tracks GROUP BY language_group ORDER BY cnt DESC"
+        ).fetchall()
+        distribution = {row["language_group"] or "(unknown)": row["cnt"] for row in rows}
+        conn.close()
+        return {
+            "status": "ok",
+            "total_tracks": total,
+            "distribution": distribution,
+        }
+
     def _recent_ml_tracks(self, user_id, limit=10):
         history = UserRepo.get_history(user_id, limit)
         ids = []
@@ -2442,8 +2562,19 @@ class RecommenderEngine:
                LIMIT ? OFFSET ?""",
             (user_id, size, (page - 1) * size),
         ).fetchall()
+        items = []
+        for row in rows:
+            pl = dict(row)
+            cover_rows = conn.execute(
+                """SELECT t.image_url FROM user_playlist_tracks upt
+                   JOIN tracks t ON upt.track_id=t.id
+                   WHERE upt.playlist_id=? ORDER BY upt.position LIMIT 4""",
+                (pl["id"],),
+            ).fetchall()
+            pl["covers"] = [{"image_url": r["image_url"] or ""} for r in cover_rows]
+            items.append(pl)
         conn.close()
-        return {"items": [dict(r) for r in rows], "total": total, "page": page, "size": size}
+        return {"items": items, "total": total, "page": page, "size": size}
 
     def get_user_playlist(self, playlist_id):
         conn = get_connection()
@@ -2474,6 +2605,16 @@ class RecommenderEngine:
         conn.execute("DELETE FROM user_playlists WHERE id=?", (playlist_id,))
         conn.commit(); conn.close()
         return {"status": "ok"}
+
+    def update_user_playlist_cover(self, playlist_id, cover_url):
+        conn = get_connection()
+        pl = conn.execute("SELECT id FROM user_playlists WHERE id=?", (playlist_id,)).fetchone()
+        if not pl:
+            conn.close()
+            return {"error": "歌单不存在"}
+        conn.execute("UPDATE user_playlists SET cover_url=? WHERE id=?", (cover_url or "", playlist_id))
+        conn.commit(); conn.close()
+        return {"status": "ok", "cover_url": cover_url or ""}
 
     def admin_delete_comment(self, comment_id):
         conn = get_connection()

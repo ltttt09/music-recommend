@@ -41,7 +41,7 @@ import { coverStyle, coverText } from '../cover.js'
 const props = defineProps({ track: { type: Object, required: true } })
 const imgFailed = ref(false)
 
-const trackId = computed(() => props.track.id || props.track.track_id)
+const trackId = computed(() => props.track.track_id || props.track.id)
 const title = computed(() => props.track.title || props.track.track_name || '?')
 const coverChar = computed(() => coverText(title.value))
 const fallbackStyle = computed(() => coverStyle(trackId.value, props.track.genre || props.track.track_genre || ''))
@@ -50,7 +50,7 @@ const isCurrentPlaying = computed(() =>
 )
 
 function play(track) {
-  playTrack({ ...track, id: track.id || track.track_id })
+  playTrack({ ...track, id: track.track_id || track.id })
 }
 
 </script>

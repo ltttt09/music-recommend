@@ -202,7 +202,7 @@ function toggleSeed(track) {
 
 function playSeed(track) {
   playTrack({
-    id: track.id || track.track_id,
+    id: track.track_id || track.id,
     title: track.title,
     artist_name: track.artist_name,
     image_url: track.image_url,
